@@ -1,0 +1,57 @@
+{
+  "name": "Sood City",
+  "short_name": "SoodCity",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#007bff",
+  "description": "A PWA for Sood City.",
+  "icons": [
+    {
+      "src": "soodcity.jpg",
+      "sizes": "48x48",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "72x72",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "96x96",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "128x128",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "144x144",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "152x152",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "384x384",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "soodcity.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
