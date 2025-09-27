@@ -19,13 +19,13 @@
     "ajv": "^8.17.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "react-scripts": "^0.0.0"
+    "react-scripts": "^5.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
-    "typescript": "^5.9.2"
+    "typescript": "^3.9.10"
   },
   "browserslist": {
     "production": [
