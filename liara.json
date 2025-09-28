@@ -1,4 +1,4 @@
 {
   "platform": "node",
-  "root": "backend"
+  "path": "backend"
 }
