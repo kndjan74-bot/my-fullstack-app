@@ -1,4 +1,8 @@
 {
-  "platform": "node",
-  "path": "backend"
+  "app": "soodcity",
+  "port": 3000,
+  "build": {
+    "location": "iran"
+  },
+  "disks": []
 }
