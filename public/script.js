@@ -748,7 +748,7 @@
         // saveDataToStorage has been removed. Data persistence is now handled by the API simulation.
 
         // --- API ---
-        const API_BASE_URL = 'https://soodcity.liara.run';
+        const API_BASE_URL = 'https://soodcity.liara.run/api';
         const api = {
             async register(userData) {
                 try {
@@ -1372,7 +1372,7 @@
 
             const API_ENDPOINT_URL = 'https://api.sms.ir/v1/send/verify'; // As per user's PHP example
             const YOUR_API_KEY = 'eCGjVdVxsFTHy9oNhTmpMC0e3R11dXkWPSbmmnMAC5u5Cbeb'; // User must replace this
-            const YOUR_TEMPLATE_ID = 134626; // As per user's PHP example
+            const YOUR_TEMPLATE_ID = 817766; // As per user's PHP example
 
             // For simulation, we generate a code here. In a real app, the backend generates and stores it.
             const verificationCode = Math.floor(1000 + Math.random() * 9000);
