@@ -791,13 +791,14 @@
                         method: 'GET',
                         headers: { 'x-auth-token': token },
                     });
-                    const user = await res.json();
+                
                     if (!res.ok) {
                         return { success: false };
                     }
+                    const user = await res.json();
                     return { success: true, user };
                 } catch (err) {
-                    console.error('Get user error:', err);
+                    
                     return { success: false };
                 }
             },
