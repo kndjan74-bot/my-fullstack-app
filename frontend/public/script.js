@@ -787,7 +787,7 @@
             },
             async getAuthUser(token) {
                 try {
-                    const res = await fetch(`${API_BASE_URL}/auth`, {
+                    const res = await fetch(`${API_BASE_URL}/users/auth`, {  // ✅ تصحیح شده
                         method: 'GET',
                         headers: { 'x-auth-token': token },
                     });
