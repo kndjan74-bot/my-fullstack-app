@@ -115,14 +115,23 @@ router.post(
       };
 
       jwt.sign(
-        payload,
-        process.env.JWT_SECRET,
-        { expiresIn: '5h' },
-        (err, token) => {
-          if (err) throw err;
-          res.json({ token });
-        }
-      );
+  payload,
+  process.env.JWT_SECRET,
+  { expiresIn: '5h' },
+  (err, token) => {
+    if (err) throw err;
+    res.json({ 
+      token,  // ✅ توکن
+      user: { // ✅ اطلاعات کاربر
+        id: user._id,
+        fullname: user.fullname,
+        phone: user.phone, 
+        role: user.role,
+        province: user.province
+      }
+    });
+  }
+);
     } catch (err) {
       console.error(err.message);
       res.status(500).send('خطای سرور');

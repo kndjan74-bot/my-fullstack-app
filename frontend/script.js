@@ -762,7 +762,7 @@
                         const message = data.msg || (data.errors ? data.errors.map(e => e.msg).join(', ') : 'خطای ناشناخته در ثبت نام');
                         return { success: false, message };
                     }
-                    return { success: true, token: data.token };
+                    return { success: true, token: data.token,user: data.user  };
                 } catch (err) {
                     console.error('Registration error:', err);
                     return { success: false, message: 'خطا در ارتباط با سرور' };
