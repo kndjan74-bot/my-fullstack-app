@@ -129,5 +129,41 @@ router.post(
     }
   }
 );
+// @route   GET api/users/auth
+// @desc    Get authenticated user
+// @access  Private
+router.get('/auth', async (req, res) => {
+  try {
+    // دریافت توکن از header
+    const token = req.header('x-auth-token');
+    
+    if (!token) {
+      return res.status(401).json({ msg: 'توکن ارائه نشده است' });
+    }
 
+    // بررسی اعتبار توکن
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // پیدا کردن کاربر در دیتابیس
+    const user = await User.findById(decoded.user.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ msg: 'کاربر یافت نشد' });
+    }
+
+    // برگرداندن اطلاعات کاربر
+    res.json({
+      id: user._id,
+      fullname: user.fullname,
+      phone: user.phone, 
+      role: user.role,
+      province: user.province,
+      address: user.address,
+      licensePlate: user.licensePlate
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(401).json({ msg: 'توکن معتبر نیست' });
+  }
+});
 module.exports = router;

@@ -28,6 +28,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/soodcity'
 
 // Routes
 app.use('/api/users', require('./routes/users'));
+app.use('/api/users', require('./routes/auth')); // این خط را اضافه کنید
 
 // ✅ Route های تست
 app.get('/api/test', (req, res) => {

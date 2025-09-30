@@ -1,15 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const auth = require('../middleware1/auth'); // We need to create this middleware
+const auth = require('../middleware/auth'); // تصحیح مسیر
 const User = require('../models/User');
 
-// @route   GET api/auth
+// @route   GET api/users/auth
 // @desc    Get logged in user
 // @access  Private
 router.get('/', auth, async (req, res) => {
   try {
-    // req.user is set by the auth middleware
     const user = await User.findById(req.user.id).select('-password');
     res.json(user);
   } catch (err) {
