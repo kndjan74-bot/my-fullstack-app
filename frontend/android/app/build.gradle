@@ -16,10 +16,36 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+
+     signingConfigs {
+        release {
+            // 📁 مسیر فایل keystore (کنار این فایل build.gradle)
+            storeFile file("soodcity.keystore")
+            
+            // 🔒 پسورد keystore
+            storePassword "890326911h"
+            
+            // 🏷️ نام مستعار کلید
+            keyAlias "soodcity"
+            
+            // 🔑 پسورد کلید
+            keyPassword "890326911h"
+        }
+    }
     buildTypes {
         release {
-            minifyEnabled false
+            
+    
+        // ✅ فعال کردن امضا برای نسخه انتشار
+            signingConfig signingConfigs.release
+            minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        
+        debug {
+            debuggable true
+            signingConfig signingConfigs.debug
         }
     }
 }
