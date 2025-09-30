@@ -732,20 +732,61 @@
         });
 
         async function loadDataFromServer() {
-            console.log('[API STUB] Getting initial data from server...');
-            // In a real app, this would make a GET request to /api/initial-data or similar.
-            // The server would return all necessary data for the user.
-            // For this simulation, we'll just read from localStorage as if it were the server's response.
-            users = JSON.parse(localStorage.getItem('agritrack_users') || '[]');
-            requests = JSON.parse(localStorage.getItem('agritrack_requests') || '[]');
-            notifications = JSON.parse(localStorage.getItem('agritrack_notifications') || '[]');
-            messages = JSON.parse(localStorage.getItem('agritrack_messages') || '[]');
-            supplyAds = JSON.parse(localStorage.getItem('agritrack_supply_ads') || '[]');
-            demandAds = JSON.parse(localStorage.getItem('agritrack_demand_ads') || '[]');
-            connections = JSON.parse(localStorage.getItem('agritrack_connections') || '[]');
+            console.log('[API] Getting initial data from server...');
+            
+            try {
+                // Load users
+                const usersRes = await fetch(`${API_BASE_URL}/users`, {
+                    headers: { 'x-auth-token': localStorage.getItem('token') }
+                });
+                if (usersRes.ok) {
+                    const usersData = await usersRes.json();
+                    users = usersData.users || [];
+                }
+
+                // Load connections from server
+                connections = await loadConnectionsFromServer();
+
+                // Load other data from localStorage (temporarily)
+                requests = JSON.parse(localStorage.getItem('agritrack_requests') || '[]');
+                notifications = JSON.parse(localStorage.getItem('agritrack_notifications') || '[]');
+                messages = JSON.parse(localStorage.getItem('agritrack_messages') || '[]');
+                supplyAds = JSON.parse(localStorage.getItem('agritrack_supply_ads') || '[]');
+                demandAds = JSON.parse(localStorage.getItem('agritrack_demand_ads') || '[]');
+                
+            } catch (err) {
+                console.error('Error loading data from server:', err);
+                // Fallback to localStorage
+                users = JSON.parse(localStorage.getItem('agritrack_users') || '[]');
+                requests = JSON.parse(localStorage.getItem('agritrack_requests') || '[]');
+                notifications = JSON.parse(localStorage.getItem('agritrack_notifications') || '[]');
+                messages = JSON.parse(localStorage.getItem('agritrack_messages') || '[]');
+                supplyAds = JSON.parse(localStorage.getItem('agritrack_supply_ads') || '[]');
+                demandAds = JSON.parse(localStorage.getItem('agritrack_demand_ads') || '[]');
+                connections = JSON.parse(localStorage.getItem('agritrack_connections') || '[]');
+            }
         }
 
-        // saveDataToStorage has been removed. Data persistence is now handled by the API simulation.
+        // Helper function to load connections from server
+        async function loadConnectionsFromServer() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/users/connections`, {
+                    headers: { 
+                        'x-auth-token': localStorage.getItem('token')
+                    }
+                });
+                
+                if (!res.ok) {
+                    throw new Error('Failed to load connections');
+                }
+                
+                const data = await res.json();
+                return data.connections || [];
+            } catch (err) {
+                console.error('Error loading connections:', err);
+                return [];
+            }
+        }
 
         // --- API ---
         const API_BASE_URL = 'https://soodcity.liara.run/api';
@@ -947,36 +988,7 @@
                 }
                 return { success: true };
             },
-            async createConnection(connectionData) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating connection', connectionData);
-                const newConnection = { ...connectionData, id: Date.now(), status: 'pending' };
-                connections.push(newConnection);
-                localStorage.setItem('agritrack_connections', JSON.stringify(connections));
-                return { success: true, connection: newConnection };
-            },
-            async updateConnection(connectionId, updates) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Updating connection ${connectionId} with`, updates);
-                const connIndex = connections.findIndex(c => c.id === connectionId);
-                if (connIndex > -1) {
-                    Object.assign(connections[connIndex], updates);
-                    localStorage.setItem('agritrack_connections', JSON.stringify(connections));
-                    return { success: true, connection: connections[connIndex] };
-                }
-                return { success: false, message: 'Connection not found' };
-            },
-            async deleteConnection(connectionId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Deleting connection ${connectionId}`);
-                const initialLength = connections.length;
-                connections = connections.filter(c => c.id !== connectionId);
-                if (connections.length < initialLength) {
-                    localStorage.setItem('agritrack_connections', JSON.stringify(connections));
-                    return { success: true };
-                }
-                return { success: false, message: 'Connection not found' };
-            },
+            // Connection functions removed - now using direct API calls
             async createRequest(requestData) {
                 await loadDataFromServer();
                 console.log('[API STUB] Creating request', requestData);
@@ -1280,70 +1292,6 @@
                 showToast(response.message || 'نام کاربری یا رمز عبور اشتباه است', 'error');
             }
         }
-
-        /* === OLD PASSWORD RECOVERY FUNCTIONS - COMMENTED OUT ===
-        // NEW PASSWORD RECOVERY FUNCTIONS
-        function handlePasswordRecovery(event) {
-            event.preventDefault();
-            loadDataFromStorage();
-            const phone = document.getElementById('recovery-phone').value;
-            const user = users.find(u => u.username === phone || u.phone === phone);
-
-            if (user) {
-                // In a real app, you would send an SMS here.
-                // For this simulation, we'll store a mock verification code.
-                const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
-                sessionStorage.setItem('recovery_code', verificationCode);
-                sessionStorage.setItem('recovery_phone', phone);
-
-                console.log(`کد تایید برای ${phone}: ${verificationCode}`); // For debugging
-                showToast(`کد تایید (تستی): ${verificationCode}`, 'info');
-
-                document.getElementById('recovery-phone-display').textContent = phone;
-                document.getElementById('recovery-step-1').classList.add('hidden');
-                document.getElementById('recovery-step-2').classList.remove('hidden');
-            } else {
-                showToast('کاربری با این شماره تلفن یافت نشد', 'error');
-            }
-        }
-
-        function verifyRecoveryCode(event) {
-            event.preventDefault();
-            const code = document.getElementById('recovery-code').value;
-            const newPassword = document.getElementById('recovery-new-password').value;
-            const storedCode = sessionStorage.getItem('recovery_code');
-            const phone = sessionStorage.getItem('recovery_phone');
-
-            if (code === storedCode) {
-                resetPassword(phone, newPassword);
-            } else {
-                showToast('کد تایید اشتباه است', 'error');
-            }
-        }
-
-        function resetPassword(phone, newPassword) {
-            loadDataFromStorage();
-            const userIndex = users.findIndex(u => u.username === phone || u.phone === phone);
-            if (userIndex !== -1) {
-                users[userIndex].password = newPassword;
-                saveDataToStorage();
-                
-                // Cleanup session storage
-                sessionStorage.removeItem('recovery_code');
-                sessionStorage.removeItem('recovery_phone');
-
-                showToast('رمز عبور با موفقیت تغییر کرد. لطفاً با رمز جدید وارد شوید.', 'success');
-                
-                // Hide recovery form and show login form
-                document.getElementById('recovery-step-2').classList.add('hidden');
-                document.getElementById('recovery-step-1').classList.remove('hidden'); // Reset for next time
-                showLogin();
-            } else {
-                // This case should ideally not be reached if checks are done properly
-                showToast('خطا در بازیابی حساب. کاربر یافت نشد.', 'error');
-            }
-        }
-        */
 
         // === NEW PASSWORD RECOVERY FUNCTIONS (FROM USER) ===
         async function handlePasswordRecovery(event) {
@@ -2669,71 +2617,170 @@ function refreshAllMapMarkers() {
             }
         }
 
-        // Connection Functions
+        // Connection Functions - تصحیح شده با API واقعی
         async function requestConnection(targetId, sourceRole) {
-            await loadDataFromServer(); // Get latest data
-            const existingConnection = connections.find(c =>
-                c.sourceId === currentUser.id && c.targetId === parseInt(targetId)
-            );
-
-            if (existingConnection) {
-                showToast('درخواست اتصال قبلاً ارسال شده است', 'info');
-                return;
-            }
-
-            const connectionData = {
-                sourceId: currentUser.id,
-                sourceName: currentUser.fullname,
-                sourceRole: sourceRole,
-                sourcePhone: currentUser.phone,
-                targetId: parseInt(targetId),
-                createdAt: new Date().toISOString()
-            };
-
-            if (sourceRole === 'driver') {
-                connectionData.sourceLicensePlate = currentUser.licensePlate;
-            } else if (sourceRole === 'greenhouse') {
-                connectionData.sourceAddress = currentUser.address;
-            }
-
-            const response = await api.createConnection(connectionData);
-
-            if (response.success) {
-                // The server should create the notification for the target user.
-                showToast('درخواست اتصال ارسال شد', 'success');
-                // Refresh relevant UI parts
-                if (currentUser.role === 'greenhouse') loadGreenhouseConnections();
-                if (currentUser.role === 'driver') loadDriverConnections();
-            } else {
-                showToast(response.message || 'خطا در ارسال درخواست اتصال.', 'error');
+            try {
+                const res = await fetch(`${API_BASE_URL}/users/connections`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-auth-token': localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({ 
+                        targetId, 
+                        sourceRole, 
+                        sourceId: currentUser.id,
+                        sourceName: currentUser.fullname,
+                        sourcePhone: currentUser.phone,
+                        sourceLicensePlate: currentUser.licensePlate,
+                        sourceAddress: currentUser.address
+                    })
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    return { success: false, message: errorData.msg || 'خطا در ارسال درخواست' };
+                }
+                
+                const data = await res.json();
+                return { success: true, connection: data.connection };
+            } catch (err) {
+                console.error('Connection request error:', err);
+                return { success: false, message: 'خطا در ارتباط با سرور' };
             }
         }
 
         async function approveConnection(connectionId) {
-            const response = await api.updateConnection(connectionId, { status: 'approved' });
-            if (response.success) {
-                // The server should create the notification for the source user.
-                showToast('اتصال تایید شد', 'success');
-                await loadDataFromServer(); // Reload data to reflect changes
-                loadSortingConnectionRequests();
-                loadSortingApprovedConnections();
-            } else {
-                showToast(response.message || 'خطا در تایید اتصال.', 'error');
+            try {
+                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
+                    method: 'PUT',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-auth-token': localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({ status: 'approved' })
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    return { success: false, message: errorData.msg || 'خطا در تایید اتصال' };
+                }
+                
+                const data = await res.json();
+                return { success: true, connection: data.connection };
+            } catch (err) {
+                console.error('Connection approval error:', err);
+                return { success: false, message: 'خطا در ارتباط با سرور' };
             }
         }
 
         async function rejectConnection(connectionId) {
-            // We need the connection details before deleting it to send a notification.
-            await loadDataFromServer();
+            try {
+                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
+                    method: 'DELETE',
+                    headers: { 
+                        'x-auth-token': localStorage.getItem('token')
+                    }
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    return { success: false, message: errorData.msg || 'خطا در رد اتصال' };
+                }
+                
+                return { success: true };
+            } catch (err) {
+                console.error('Connection rejection error:', err);
+                return { success: false, message: 'خطا در ارتباط با سرور' };
+            }
+        }
+
+        async function toggleConnectionSuspension(connectionId) {
+            try {
+                // First get current connection state
+                const currentConnections = await loadConnectionsFromServer();
+                const connection = currentConnections.find(c => c.id === connectionId);
+                
+                if (!connection) {
+                    return { success: false, message: 'اتصال یافت نشد' };
+                }
+                
+                const newSuspendedState = !connection.suspended;
+                
+                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
+                    method: 'PUT',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-auth-token': localStorage.getItem('token')
+                    },
+                    body: JSON.stringify({ suspended: newSuspendedState })
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    return { success: false, message: errorData.msg || 'خطا در تغییر وضعیت اتصال' };
+                }
+                
+                const data = await res.json();
+                return { success: true, connection: data.connection };
+            } catch (err) {
+                console.error('Connection suspension error:', err);
+                return { success: false, message: 'خطا در ارتباط با سرور' };
+            }
+        }
+
+        async function disconnectFromCenter(connectionId) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
+                    method: 'DELETE',
+                    headers: { 
+                        'x-auth-token': localStorage.getItem('token')
+                    }
+                });
+                
+                if (!res.ok) {
+                    const errorData = await res.json();
+                    return { success: false, message: errorData.msg || 'خطا در قطع اتصال' };
+                }
+                
+                return { success: true };
+            } catch (err) {
+                console.error('Disconnection error:', err);
+                return { success: false, message: 'خطا در ارتباط با سرور' };
+            }
+        }
+
+        async function requestDriverConnection() {
+            const select = document.getElementById('driver-sorting-center-select');
+            const targetId = select.value;
+            if (!targetId) {
+                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
+                return;
+            }
             
-            const response = await api.deleteConnection(connectionId);
+            const response = await requestConnection(targetId, 'driver');
             if (response.success) {
-                // The server should handle notifying the user (if desired).
-                showToast('درخواست اتصال رد شد', 'info');
-                await loadDataFromServer(); // Reload data to reflect changes
-                loadSortingConnectionRequests();
+                showToast('درخواست اتصال ارسال شد', 'success');
+                loadDriverConnections();
             } else {
-                showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
+                showToast(response.message || 'خطا در ارسال درخواست اتصال', 'error');
+            }
+        }
+
+        async function requestGreenhouseConnection() {
+            const select = document.getElementById('greenhouse-sorting-center-select');
+            const targetId = select.value;
+            if (!targetId) {
+                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
+                return;
+            }
+            
+            const response = await requestConnection(targetId, 'greenhouse');
+            if (response.success) {
+                showToast('درخواست اتصال ارسال شد', 'success');
+                loadGreenhouseConnections();
+            } else {
+                showToast(response.message || 'خطا در ارسال درخواست اتصال', 'error');
             }
         }
 
@@ -2766,11 +2813,34 @@ function refreshAllMapMarkers() {
                         <span class="text-xs text-gray-500">${formatDate(req.createdAt)}</span>
                     </div>
                     <div class="flex space-x-2 space-x-reverse">
-                        <button onclick="approveConnection(${req.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm">تایید</button>
-                        <button onclick="rejectConnection(${req.id})" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm">رد</button>
+                        <button onclick="handleApproveConnection(${req.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm">تایید</button>
+                        <button onclick="handleRejectConnection(${req.id})" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm">رد</button>
                     </div>
                 </div>
             `}).join('');
+        }
+
+        async function handleApproveConnection(connectionId) {
+            const response = await approveConnection(connectionId);
+            if (response.success) {
+                showToast('اتصال تایید شد', 'success');
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
+                loadSortingApprovedConnections();
+            } else {
+                showToast(response.message || 'خطا در تایید اتصال.', 'error');
+            }
+        }
+
+        async function handleRejectConnection(connectionId) {
+            const response = await rejectConnection(connectionId);
+            if (response.success) {
+                showToast('درخواست اتصال رد شد', 'info');
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
+            } else {
+                showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
+            }
         }
 
         function loadSortingApprovedConnections() {
@@ -2806,8 +2876,8 @@ function refreshAllMapMarkers() {
                                 ${isSuspended ? '<p class="text-xs font-bold text-yellow-700">(معلق)</p>' : ''}
                             </div>
                             <div class="flex items-center space-x-2 space-x-reverse">
-                                <button onclick="toggleConnectionSuspension(${conn.id})" class="${suspendButtonClass} text-white px-2 py-1 rounded-lg text-xs">${suspendButtonText}</button>
-                                <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع</button>
+                                <button onclick="handleToggleConnectionSuspension(${conn.id})" class="${suspendButtonClass} text-white px-2 py-1 rounded-lg text-xs">${suspendButtonText}</button>
+                                <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع</button>
                             </div>
                         </div>
                     `;
@@ -2826,7 +2896,7 @@ function refreshAllMapMarkers() {
                         <div>
                             <h5 class="font-semibold">${conn.sourceName}</h5>
                         </div>
-                        <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع اتصال</button>
+                        <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع اتصال</button>
                     </div>
                 `).join('');
                 html += '</div>';
@@ -2837,26 +2907,36 @@ function refreshAllMapMarkers() {
             container.innerHTML = html;
         }
 
-        async function toggleConnectionSuspension(connectionId) {
-            // Find the current state to toggle it
-            await loadDataFromServer();
-            const connection = connections.find(c => c.id === connectionId);
-            if (!connection) {
-                showToast('اتصال یافت نشد.', 'error');
-                return;
-            }
-            const newSuspendedState = !connection.suspended;
-
-            const response = await api.updateConnection(connectionId, { suspended: newSuspendedState });
-
+        async function handleToggleConnectionSuspension(connectionId) {
+            const response = await toggleConnectionSuspension(connectionId);
             if (response.success) {
-                showToast(`اتصال راننده با موفقیت ${newSuspendedState ? 'معلق' : 'فعال'} شد.`, 'success');
+                showToast(`اتصال راننده با موفقیت ${response.connection.suspended ? 'معلق' : 'فعال'} شد.`, 'success');
                 await loadDataFromServer(); // Reload data
                 // Refresh the UI
                 loadSortingApprovedConnections();
                 loadAvailableDrivers();
             } else {
                 showToast(response.message || 'خطا در تغییر وضعیت اتصال.', 'error');
+            }
+        }
+
+        async function handleDisconnectFromCenter(connectionId) {
+            const response = await disconnectFromCenter(connectionId);
+            if (response.success) {
+                showToast('اتصال با موفقیت لغو شد', 'success');
+                
+                await loadDataFromServer();
+                if (currentUser.role === 'greenhouse') {
+                    loadGreenhouseConnections();
+                    loadSortingCenters();
+                } else if (currentUser.role === 'driver') {
+                    loadDriverConnections();
+                } else if (currentUser.role === 'sorting') {
+                    loadSortingConnectionRequests();
+                    loadSortingApprovedConnections();
+                }
+            } else {
+                showToast(response.message || 'خطا در قطع اتصال.', 'error');
             }
         }
 
@@ -2888,16 +2968,6 @@ function refreshAllMapMarkers() {
                     </div>
                 </div>
             `).join('');
-        }
-
-        async function requestDriverConnection() {
-            const select = document.getElementById('driver-sorting-center-select');
-            const targetId = select.value;
-            if (!targetId) {
-                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
-                return;
-            }
-            await requestConnection(targetId, 'driver');
         }
 
         function loadDriverConnections() {
@@ -2950,7 +3020,7 @@ function refreshAllMapMarkers() {
                                 <h4 class="font-semibold">${center ? center.fullname : 'مرکز حذف شده'}</h4>
                                 <p class="text-sm font-medium px-2 py-1 rounded-full inline-block ${statusClass}">${statusText}</p>
                             </div>
-                            <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
+                            <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
                                 لغو اتصال
                             </button>
                         </div>
@@ -2961,38 +3031,6 @@ function refreshAllMapMarkers() {
 
 
         // Greenhouse Functions
-        async function requestGreenhouseConnection() {
-            const select = document.getElementById('greenhouse-sorting-center-select');
-            const targetId = select.value;
-            if (!targetId) {
-                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
-                return;
-            }
-            await requestConnection(targetId, 'greenhouse');
-        }
-
-        async function disconnectFromCenter(connectionId) {
-            const response = await api.deleteConnection(connectionId);
-
-            if (response.success) {
-                // The server should handle notifying the other party.
-                showToast('اتصال با موفقیت لغو شد', 'success');
-                
-                await loadDataFromServer();
-                if (currentUser.role === 'greenhouse') {
-                    loadGreenhouseConnections();
-                    loadSortingCenters();
-                } else if (currentUser.role === 'driver') {
-                    loadDriverConnections();
-                } else if (currentUser.role === 'sorting') {
-                    loadSortingConnectionRequests();
-                    loadSortingApprovedConnections();
-                }
-            } else {
-                showToast(response.message || 'خطا در قطع اتصال.', 'error');
-            }
-        }
-
         function loadGreenhouseConnections() {
             const container = document.getElementById('greenhouse-connections-list');
             if (!container) return;
@@ -3063,7 +3101,7 @@ function refreshAllMapMarkers() {
                                 <h4 class="font-semibold">${center ? center.fullname : 'مرکز حذف شده'}</h4>
                                 <p class="text-sm font-medium px-2 py-1 rounded-full inline-block ${statusClass}">${statusText}</p>
                             </div>
-                            <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
+                            <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
                                 لغو اتصال
                             </button>
                         </div>
