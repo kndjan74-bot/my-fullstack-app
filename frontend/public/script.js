@@ -871,7 +871,7 @@
             // --- Getters for loadDataFromServer ---
             async getAllUsers() { return this._fetch(`${API_BASE_URL}/users`); },
             async getAllAds() { return this._fetch(`${API_BASE_URL}/ads`); },
-            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connection`); },
+            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connections`); },
             async getAllMessages() { return this._fetch(`${API_BASE_URL}/messages`); }
         };
 
@@ -2238,6 +2238,14 @@ function refreshAllMapMarkers() {
 
         // Main App Functions
         async function showMainApp() {
+            // Defensive check to prevent errors if currentUser is null
+            if (!currentUser) {
+                console.error("showMainApp called without a valid user. Aborting.");
+                // Optionally, force a logout to clean up state
+                await logout();
+                return;
+            }
+
             updateUiState(UI_STATES.MAIN_APP);
             
             if (!sessionStorage.getItem('disclaimer_shown_this_session')) {
