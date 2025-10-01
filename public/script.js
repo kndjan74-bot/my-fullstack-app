@@ -732,32 +732,36 @@
         });
 
         async function loadDataFromServer() {
-            const token = localStorage.getItem('token');
-            if (!token) return;
-
             console.log('Getting initial data from server...');
             try {
+                // Use the new API getter methods for consistency and centralized logic.
                 const [usersRes, requestsRes, adsRes, connectionsRes, messagesRes] = await Promise.all([
-                    fetch(`${API_BASE_URL}/users`, { headers: { 'x-auth-token': token } }),
-                    fetch(`${API_BASE_URL}/requests`, { headers: { 'x-auth-token': token } }),
-                    fetch(`${API_BASE_URL}/ads`, { headers: { 'x-auth-token': token } }),
-                    fetch(`${API_BASE_URL}/connections`, { headers: { 'x-auth-token': token } }),
-                    fetch(`${API_BASE_URL}/messages`, { headers: { 'x-auth-token': token } })
+                    api.getAllUsers(),
+                    api.getAllRequests(),
+                    api.getAllAds(),
+                    api.getAllConnections(),
+                    api.getAllMessages()
                 ]);
 
-                if ([usersRes, requestsRes, adsRes, connectionsRes, messagesRes].some(res => res.status === 401)) {
-                    showToast('نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                // The _fetch helper returns { success: false, ... } on any error, including 401.
+                const results = [usersRes, requestsRes, adsRes, connectionsRes, messagesRes];
+                if (results.some(res => !res.success)) {
+                    const errorResult = results.find(res => !res.success);
+                    showToast(errorResult.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
                     await logout();
                     return;
                 }
 
-                users = await usersRes.json();
-                requests = await requestsRes.json();
-                const allAds = await adsRes.json();
+                // Assuming the backend nests array responses within a key, e.g., { users: [...] }
+                // This aligns with how the login response provides a 'user' object.
+                users = usersRes.users || [];
+                requests = requestsRes.requests || [];
+                const allAds = adsRes.ads || [];
+                connections = connectionsRes.connections || [];
+                messages = messagesRes.messages || [];
+
                 supplyAds = allAds.filter(ad => ad.adType === 'supply');
                 demandAds = allAds.filter(ad => ad.adType === 'demand');
-                connections = await connectionsRes.json();
-                messages = await messagesRes.json();
 
             } catch (error) {
                 console.error("Failed to load data from server:", error);
@@ -799,8 +803,8 @@
             async login(phone, password) {
                 return this._fetch(`${API_BASE_URL}/users/login`, { method: 'POST', body: JSON.stringify({ phone, password }) });
             },
-            async getAuthUser(token) {
-                 return this._fetch(`${API_BASE_URL}/users/auth`, { headers: { 'x-auth-token': token } });
+            async getAuthUser() {
+                 return this._fetch(`${API_BASE_URL}/users/auth`);
             },
             async deleteAccount() {
                 return this._fetch(`${API_BASE_URL}/users`, { method: 'DELETE' });
@@ -861,7 +865,14 @@
             },
             async rejectConsolidatedDelivery(deliveryRequestId, reason) {
                 return this._fetch(`${API_BASE_URL}/requests/${deliveryRequestId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
-            }
+            },
+            async getAllRequests() { return this._fetch(`${API_BASE_URL}/requests`); },
+
+            // --- Getters for loadDataFromServer ---
+            async getAllUsers() { return this._fetch(`${API_BASE_URL}/users`); },
+            async getAllAds() { return this._fetch(`${API_BASE_URL}/ads`); },
+            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connections`); },
+            async getAllMessages() { return this._fetch(`${API_BASE_URL}/messages`); }
         };
 
 
@@ -928,7 +939,9 @@
 
             if (response.success && response.token) {
                 localStorage.setItem('token', response.token);
-                currentUser = response.user; // The server should return the user object on successful registration
+                // The server returns the full user object on successful registration.
+                // We can trust this and don't need to make another auth call.
+                currentUser = response.user;
                 showToast('ثبت نام با موفقیت انجام شد. در حال ورود...', 'success');
                 await showMainApp();
             } else {
@@ -946,7 +959,7 @@
             
             if (response.success && response.token) {
                 localStorage.setItem('token', response.token);
-                const authResponse = await api.getAuthUser(response.token);
+                const authResponse = await api.getAuthUser();
                 if (authResponse.success) {
                     currentUser = authResponse.user;
                     await showMainApp();
