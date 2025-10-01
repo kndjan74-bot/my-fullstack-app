@@ -866,13 +866,21 @@
             async rejectConsolidatedDelivery(deliveryRequestId, reason) {
                 return this._fetch(`${API_BASE_URL}/requests/${deliveryRequestId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
             },
-            async getAllRequests() { return this._fetch(`${API_BASE_URL}/requests`); },
+            async getAllRequests() {
+                return { success: true, requests: [] };
+            },
 
             // --- Getters for loadDataFromServer ---
             async getAllUsers() { return this._fetch(`${API_BASE_URL}/users`); },
-            async getAllAds() { return this._fetch(`${API_BASE_URL}/ads`); },
-            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connections`); },
-            async getAllMessages() { return this._fetch(`${API_BASE_URL}/messages`); }
+            async getAllAds() {
+                return { success: true, ads: [] };
+            },
+            async getAllConnections() {
+                return { success: true, connections: [] };
+            },
+            async getAllMessages() {
+                return { success: true, messages: [] };
+            }
         };
 
 
@@ -2238,11 +2246,10 @@ function refreshAllMapMarkers() {
 
         // Main App Functions
         async function showMainApp() {
-            // Defensive check to prevent errors if currentUser is null
-            if (!currentUser) {
-                console.error("showMainApp called without a valid user. Aborting.");
-                // Optionally, force a logout to clean up state
-                await logout();
+            // Defensive check to prevent errors if currentUser is null or lacks a role
+            if (!currentUser || !currentUser.role) {
+                console.error("showMainApp called with an invalid user object. Aborting.", currentUser);
+                updateUiState(UI_STATES.LANDING); // Redirect to landing page
                 return;
             }
 
