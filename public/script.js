@@ -871,7 +871,7 @@
             // --- Getters for loadDataFromServer ---
             async getAllUsers() { return this._fetch(`${API_BASE_URL}/users`); },
             async getAllAds() { return this._fetch(`${API_BASE_URL}/ads`); },
-            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connections`); },
+            async getAllConnections() { return this._fetch(`${API_BASE_URL}/connection`); },
             async getAllMessages() { return this._fetch(`${API_BASE_URL}/messages`); }
         };
 
