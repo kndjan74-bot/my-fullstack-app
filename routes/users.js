@@ -64,7 +64,18 @@ router.post(
         { expiresIn: '5h' }, // Token expires in 5 hours
         (err, token) => {
           if (err) throw err;
-          res.json({ token });
+          res.json({ 
+            token,
+            user: {
+              id: user._id,
+              fullname: user.fullname,
+              phone: user.phone,
+              role: user.role,
+              province: user.province,
+              address: user.address,
+              licensePlate: user.licensePlate
+            }
+          });
         }
       );
     } catch (err) {
@@ -115,29 +126,32 @@ router.post(
       };
 
       jwt.sign(
-  payload,
-  process.env.JWT_SECRET,
-  { expiresIn: '5h' },
-  (err, token) => {
-    if (err) throw err;
-    res.json({ 
-      token,  // ✅ توکن
-      user: { // ✅ اطلاعات کاربر
-        id: user._id,
-        fullname: user.fullname,
-        phone: user.phone, 
-        role: user.role,
-        province: user.province
-      }
-    });
-  }
-);
+        payload,
+        process.env.JWT_SECRET,
+        { expiresIn: '5h' },
+        (err, token) => {
+          if (err) throw err;
+          res.json({ 
+            token,
+            user: {
+              id: user._id,
+              fullname: user.fullname,
+              phone: user.phone, 
+              role: user.role,
+              province: user.province,
+              address: user.address,
+              licensePlate: user.licensePlate
+            }
+          });
+        }
+      );
     } catch (err) {
       console.error(err.message);
       res.status(500).send('خطای سرور');
     }
   }
 );
+
 // @route   GET api/users/auth
 // @desc    Get authenticated user
 // @access  Private
@@ -175,4 +189,5 @@ router.get('/auth', async (req, res) => {
     res.status(401).json({ msg: 'توکن معتبر نیست' });
   }
 });
+
 module.exports = router;
