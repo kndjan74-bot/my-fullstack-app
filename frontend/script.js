@@ -732,467 +732,140 @@
         });
 
         async function loadDataFromServer() {
-            console.log('[API] Getting initial data from server...');
-            
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
+            console.log('Getting initial data from server...');
             try {
-                // Load users
-                const usersRes = await fetch(`${API_BASE_URL}/users`, {
-                    headers: { 'x-auth-token': localStorage.getItem('token') }
-                });
-                if (usersRes.ok) {
-                    const usersData = await usersRes.json();
-                    users = usersData.users || [];
+                const [usersRes, requestsRes, adsRes, connectionsRes, messagesRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/users`, { headers: { 'x-auth-token': token } }),
+                    fetch(`${API_BASE_URL}/requests`, { headers: { 'x-auth-token': token } }),
+                    fetch(`${API_BASE_URL}/ads`, { headers: { 'x-auth-token': token } }),
+                    fetch(`${API_BASE_URL}/connections`, { headers: { 'x-auth-token': token } }),
+                    fetch(`${API_BASE_URL}/messages`, { headers: { 'x-auth-token': token } })
+                ]);
+
+                if ([usersRes, requestsRes, adsRes, connectionsRes, messagesRes].some(res => res.status === 401)) {
+                    showToast('نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                    await logout();
+                    return;
                 }
 
-                // Load connections from server
-                connections = await loadConnectionsFromServer();
+                users = await usersRes.json();
+                requests = await requestsRes.json();
+                const allAds = await adsRes.json();
+                supplyAds = allAds.filter(ad => ad.adType === 'supply');
+                demandAds = allAds.filter(ad => ad.adType === 'demand');
+                connections = await connectionsRes.json();
+                messages = await messagesRes.json();
 
-                // Load other data from localStorage (temporarily)
-                requests = JSON.parse(localStorage.getItem('agritrack_requests') || '[]');
-                notifications = JSON.parse(localStorage.getItem('agritrack_notifications') || '[]');
-                messages = JSON.parse(localStorage.getItem('agritrack_messages') || '[]');
-                supplyAds = JSON.parse(localStorage.getItem('agritrack_supply_ads') || '[]');
-                demandAds = JSON.parse(localStorage.getItem('agritrack_demand_ads') || '[]');
-                
-            } catch (err) {
-                console.error('Error loading data from server:', err);
-                // Fallback to localStorage
-                users = JSON.parse(localStorage.getItem('agritrack_users') || '[]');
-                requests = JSON.parse(localStorage.getItem('agritrack_requests') || '[]');
-                notifications = JSON.parse(localStorage.getItem('agritrack_notifications') || '[]');
-                messages = JSON.parse(localStorage.getItem('agritrack_messages') || '[]');
-                supplyAds = JSON.parse(localStorage.getItem('agritrack_supply_ads') || '[]');
-                demandAds = JSON.parse(localStorage.getItem('agritrack_demand_ads') || '[]');
-                connections = JSON.parse(localStorage.getItem('agritrack_connections') || '[]');
-            }
-        }
-
-        // Helper function to load connections from server
-        async function loadConnectionsFromServer() {
-            try {
-                const res = await fetch(`${API_BASE_URL}/users/connections`, {
-                    headers: { 
-                        'x-auth-token': localStorage.getItem('token')
-                    }
-                });
-                
-                if (!res.ok) {
-                    throw new Error('Failed to load connections');
-                }
-                
-                const data = await res.json();
-                return data.connections || [];
-            } catch (err) {
-                console.error('Error loading connections:', err);
-                return [];
+            } catch (error) {
+                console.error("Failed to load data from server:", error);
+                showToast('خطا در بارگذاری اطلاعات از سرور.', 'error');
             }
         }
 
         // --- API ---
         const API_BASE_URL = 'https://soodcity.liara.run/api';
+
         const api = {
-            async register(userData) {
+            async _fetch(url, options = {}) {
+                const token = localStorage.getItem('token');
+                const headers = {
+                    'Content-Type': 'application/json',
+                    ...options.headers,
+                };
+                if (token) {
+                    headers['x-auth-token'] = token;
+                }
+
                 try {
-                    const res = await fetch(`${API_BASE_URL}/users/register`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(userData),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
-                        const message = data.msg || (data.errors ? data.errors.map(e => e.msg).join(', ') : 'خطای ناشناخته در ثبت نام');
-                        return { success: false, message };
+                    const response = await fetch(url, { ...options, headers });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        return { success: false, message: data.msg || data.message || `خطای سرور: ${response.status}` };
                     }
-                    return { success: true, token: data.token,user: data.user  };
+                    return { success: true, ...data };
                 } catch (err) {
-                    console.error('Registration error:', err);
+                    console.error(`API call to ${url} failed:`, err);
                     return { success: false, message: 'خطا در ارتباط با سرور' };
                 }
+            },
+
+            // --- Authentication ---
+            async register(userData) {
+                return this._fetch(`${API_BASE_URL}/users/register`, { method: 'POST', body: JSON.stringify(userData) });
             },
             async login(phone, password) {
-                try {
-                    const res = await fetch(`${API_BASE_URL}/users/login`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ phone, password }),
-                    });
-                    const data = await res.json();
-                    if (!res.ok) {
-                        return { success: false, message: data.msg || 'اطلاعات ورود نامعتبر است' };
-                    }
-                    return { success: true, token: data.token };
-                } catch (err) {
-                    console.error('Login error:', err);
-                    return { success: false, message: 'خطا در ارتباط با سرور' };
-                }
+                return this._fetch(`${API_BASE_URL}/users/login`, { method: 'POST', body: JSON.stringify({ phone, password }) });
             },
             async getAuthUser(token) {
-                try {
-                    const res = await fetch(`${API_BASE_URL}/users/auth`, {  // ✅ تصحیح شده
-                        method: 'GET',
-                        headers: { 'x-auth-token': token },
-                    });
-                
-                    if (!res.ok) {
-                        return { success: false };
-                    }
-                    const user = await res.json();
-                    return { success: true, user };
-                } catch (err) {
-                    
-                    return { success: false };
-                }
+                 return this._fetch(`${API_BASE_URL}/users/auth`, { headers: { 'x-auth-token': token } });
             },
-            async deleteAccount(userId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Deleting account for user ${userId}`);
-                const initialLength = users.length;
-                users = users.filter(u => u.id !== userId);
-                if (users.length < initialLength) {
-                    requests = requests.filter(r => r.greenhouseId !== userId && r.driverId !== userId && r.sortingCenterId !== userId);
-                    connections = connections.filter(c => c.sourceId !== userId && c.targetId !== userId);
-                    messages = messages.filter(m => m.senderId !== userId && m.recipientId !== userId);
-                    supplyAds = supplyAds.filter(ad => ad.sellerId !== userId);
-                    demandAds = demandAds.filter(ad => ad.buyerId !== userId);
-                    localStorage.setItem('agritrack_users', JSON.stringify(users));
-                    localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                    localStorage.setItem('agritrack_connections', JSON.stringify(connections));
-                    localStorage.setItem('agritrack_messages', JSON.stringify(messages));
-                    localStorage.setItem('agritrack_supply_ads', JSON.stringify(supplyAds));
-                    localStorage.setItem('agritrack_demand_ads', JSON.stringify(demandAds));
-                    return { success: true };
-                }
-                return { success: false, message: 'User not found' };
+            async deleteAccount() {
+                return this._fetch(`${API_BASE_URL}/users`, { method: 'DELETE' });
             },
-            async changePassword(userId, currentPassword, newPassword) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Changing password for user: ${userId}`);
-                const userIndex = users.findIndex(u => u.id === userId);
-                if (userIndex > -1) {
-                    if (users[userIndex].password === currentPassword) {
-                        users[userIndex].password = newPassword;
-                        localStorage.setItem('agritrack_users', JSON.stringify(users));
-                        return { success: true };
-                    } else {
-                        return { success: false, message: 'رمز عبور فعلی اشتباه است' };
-                    }
-                }
-                return { success: false, message: 'کاربر یافت نشد' };
+            async changePassword(currentPassword, newPassword) {
+                return this._fetch(`${API_BASE_URL}/users/password`, { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) });
             },
-            async updateUser(userId, updates) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Updating user ${userId} with`, updates);
-                const userIndex = users.findIndex(u => u.id === userId);
-                if (userIndex > -1) {
-                    Object.assign(users[userIndex], updates);
-                    localStorage.setItem('agritrack_users', JSON.stringify(users));
-                    return { success: true, user: users[userIndex] };
-                }
-                return { success: false, message: 'User not found' };
+            async updateUser(updates) {
+                return this._fetch(`${API_BASE_URL}/users`, { method: 'PUT', body: JSON.stringify(updates) });
             },
-             async resetPassword(phone, newPassword) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Resetting password for phone: ${phone}`);
-                const userIndex = users.findIndex(u => u.username === phone || u.phone === phone);
-                if (userIndex > -1) {
-                    users[userIndex].password = newPassword;
-                    localStorage.setItem('agritrack_users', JSON.stringify(users));
-                    return { success: true };
-                }
-                return { success: false, message: 'User not found' };
+            async resetPassword(phone, newPassword) {
+                // This endpoint needs to be implemented on the backend
+                return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, newPassword }) });
             },
+
+            // --- Ads ---
             async createAd(adData) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating ad', adData);
-                const newAd = { ...adData, id: Date.now() };
-                if (adData.adType === 'supply') {
-                    supplyAds.push(newAd);
-                    localStorage.setItem('agritrack_supply_ads', JSON.stringify(supplyAds));
-                } else {
-                    demandAds.push(newAd);
-                    localStorage.setItem('agritrack_demand_ads', JSON.stringify(demandAds));
-                }
-                return { success: true, ad: newAd };
+                return this._fetch(`${API_BASE_URL}/ads`, { method: 'POST', body: JSON.stringify(adData) });
             },
-            async deleteAd(adId, type) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Deleting ad ${adId} of type ${type}`);
-                if (type === 'supply') {
-                    const initialLength = supplyAds.length;
-                    supplyAds = supplyAds.filter(ad => ad.id !== adId);
-                    if (supplyAds.length < initialLength) {
-                        localStorage.setItem('agritrack_supply_ads', JSON.stringify(supplyAds));
-                        return { success: true };
-                    }
-                } else {
-                    const initialLength = demandAds.length;
-                    demandAds = demandAds.filter(ad => ad.id !== adId);
-                    if (demandAds.length < initialLength) {
-                        localStorage.setItem('agritrack_demand_ads', JSON.stringify(demandAds));
-                        return { success: true };
-                    }
-                }
-                return { success: false, message: 'Ad not found' };
+            async deleteAd(adId) {
+                return this._fetch(`${API_BASE_URL}/ads/${adId}`, { method: 'DELETE' });
             },
+
+            // --- Messages ---
             async createMessage(messageData) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating message', messageData);
-                const newMessage = { ...messageData, id: Date.now(), read: false };
-                messages.push(newMessage);
-                localStorage.setItem('agritrack_messages', JSON.stringify(messages));
-                return { success: true, message: newMessage };
+                return this._fetch(`${API_BASE_URL}/messages`, { method: 'POST', body: JSON.stringify(messageData) });
             },
-            async deleteConversation(adId, otherPartyId, currentUserId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Deleting conversation for ad ${adId} between ${currentUserId} and ${otherPartyId}`);
-                const initialLength = messages.length;
-                messages = messages.filter(msg =>
-                    !(msg.adId === adId &&
-                    ((msg.senderId === currentUserId && msg.recipientId === otherPartyId) ||
-                     (msg.senderId === otherPartyId && msg.recipientId === currentUserId)))
-                );
-                if (messages.length < initialLength) {
-                    localStorage.setItem('agritrack_messages', JSON.stringify(messages));
-                    return { success: true };
-                }
-                return { success: false, message: 'Conversation not found' };
+            async deleteConversation(conversationId) {
+                return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}`, { method: 'DELETE' });
             },
-            async markConversationAsRead(recipientId, currentUserId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Marking conversation as read between ${currentUserId} and ${recipientId}`);
-                let changed = false;
-                messages.forEach(msg => {
-                    // Mark messages sent by the other party to the current user as read
-                    if (msg.recipientId === currentUserId && msg.senderId === recipientId && !msg.read) {
-                        msg.read = true;
-                        changed = true;
-                    }
-                });
-                if (changed) {
-                    localStorage.setItem('agritrack_messages', JSON.stringify(messages));
-                }
-                return { success: true };
+            async markConversationAsRead(conversationId) {
+                 return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}/read`, { method: 'PUT' });
             },
-            async markNotificationsAsRead(userId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Marking notifications as read for user ${userId}`);
-                let changed = false;
-                notifications.forEach(n => {
-                    if (n.userId === userId && !n.read) {
-                        n.read = true;
-                        changed = true;
-                    }
-                });
-                if (changed) {
-                    localStorage.setItem('agritrack_notifications', JSON.stringify(notifications));
-                }
-                return { success: true };
+            
+            // --- Connections ---
+            async createConnection(targetId) {
+                return this._fetch(`${API_BASE_URL}/connections`, { method: 'POST', body: JSON.stringify({ targetId }) });
             },
-            // Connection functions removed - now using direct API calls
+            async updateConnection(connectionId, status) {
+                 return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify({ status }) });
+            },
+            async deleteConnection(connectionId) {
+                return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'DELETE' });
+            },
+
+            // --- Requests ---
             async createRequest(requestData) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating request', requestData);
-                const newRequest = { ...requestData }; // Copy the incoming data
-
-                // Add default/server-set properties
-                newRequest.id = Date.now();
-                newRequest.isPickupConfirmed = false;
-
-                // Set status, defaulting to 'pending' only if not provided
-                if (!newRequest.status) {
-                    newRequest.status = 'pending';
-                }
-
-                requests.push(newRequest);
-                localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                return { success: true, request: newRequest };
+                return this._fetch(`${API_BASE_URL}/requests`, { method: 'POST', body: JSON.stringify(requestData) });
             },
             async updateRequest(requestId, updates) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Updating request ${requestId} with`, updates);
-                const reqIndex = requests.findIndex(r => r.id === requestId);
-                if (reqIndex > -1) {
-                    // Apply the updates to the request
-                    Object.assign(requests[reqIndex], updates);
-
-                    // If the request is being accepted, update the driver's capacity
-                    if (updates.status === 'in_progress') {
-                        const request = requests[reqIndex];
-                        const driverIndex = users.findIndex(u => u.id === request.driverId);
-                        if (driverIndex > -1) {
-                            if (request.type === 'empty') {
-                                users[driverIndex].emptyBaskets = (users[driverIndex].emptyBaskets || 0) - request.quantity;
-                            } else if (request.type === 'full') {
-                                users[driverIndex].loadCapacity = (users[driverIndex].loadCapacity || 0) - request.quantity;
-                            }
-                            // Also save the updated users array
-                            localStorage.setItem('agritrack_users', JSON.stringify(users));
-                        }
-                    }
-
-                    localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                    return { success: true, request: requests[reqIndex] };
-                }
-                return { success: false, message: 'Request not found' };
-            },
-
-            // Called by driver's completeLoadingProcess
-            async createConsolidatedDelivery(missionsToConsolidate, driver, sortingCenter) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating consolidated delivery');
-
-                if (!missionsToConsolidate || missionsToConsolidate.length === 0) {
-                    return { success: false, message: 'No missions to consolidate.' };
-                }
-
-                // 1. Mark original missions as consolidated
-                missionsToConsolidate.forEach(mission => {
-                    const req = requests.find(r => r.id === mission.id);
-                    if (req) {
-                        req.isConsolidated = true;
-                    }
-                });
-
-                // 2. Create the new 'delivered_basket' entry
-                const totalQuantity = missionsToConsolidate.reduce((sum, r) => sum + r.quantity, 0);
-                const greenhouseNames = [...new Set(missionsToConsolidate.map(r => r.greenhouseName))].join(', ');
-
-                const newDeliveryReport = {
-                    id: Date.now(),
-                    type: 'delivered_basket',
-                    status: 'in_progress_to_sorting', // Initial status
-                    quantity: totalQuantity,
-                    greenhouseName: greenhouseNames, // This is the consolidated list of names
-                    driverId: driver.id,
-                    driverName: driver.fullname,
-                    driverLicensePlate: driver.licensePlate,
-                    sortingCenterId: sortingCenter.id,
-                    sortingCenterName: sortingCenter.fullname,
-                    createdAt: new Date().toISOString(),
-                    completedAt: null,
-                    consolidatedRequestIds: missionsToConsolidate.map(r => r.id)
-                };
-
-                requests.push(newDeliveryReport);
-                localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                return { success: true, request: newDeliveryReport };
-            },
-
-            // Called by sorting center's cancelSortingDelivery
-            async rejectConsolidatedDelivery(deliveryRequestId, reason) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Rejecting consolidated delivery ${deliveryRequestId} with reason: ${reason}`);
-
-                const deliveryRequestIndex = requests.findIndex(r => r.id === deliveryRequestId);
-                if (deliveryRequestIndex === -1) {
-                    return { success: false, message: 'Delivery request not found.' };
-                }
-                const deliveryRequest = requests[deliveryRequestIndex];
-
-                // 1. Revert original missions
-                if (deliveryRequest.consolidatedRequestIds) {
-                    deliveryRequest.consolidatedRequestIds.forEach(reqId => {
-                        const originalReq = requests.find(r => r.id === reqId);
-                        if (originalReq) {
-                            originalReq.isConsolidated = false;
-                        }
-                    });
-                }
-
-                // 2. Update the delivery request status to 'rejected'
-                requests[deliveryRequestIndex].status = 'rejected';
-                requests[deliveryRequestIndex].rejectedAt = new Date().toISOString();
-                requests[deliveryRequestIndex].rejectionReason = reason;
-
-
-                localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                return { success: true, request: requests[deliveryRequestIndex] };
+                return this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'PUT', body: JSON.stringify(updates) });
             },
             async deleteRequest(requestId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Deleting request ${requestId}`);
-                const initialLength = requests.length;
-                requests = requests.filter(r => r.id !== requestId);
-                if (requests.length < initialLength) {
-                    localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                    return { success: true };
-                }
-                return { success: false, message: 'Request not found' };
+                return this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'DELETE' });
             },
-            // Called by driver's completeLoadingProcess
-            async createConsolidatedDelivery(missionsToConsolidate, driver, sortingCenter) {
-                await loadDataFromServer();
-                console.log('[API STUB] Creating consolidated delivery');
-
-                if (!missionsToConsolidate || missionsToConsolidate.length === 0) {
-                    return { success: false, message: 'No missions to consolidate.' };
-                }
-
-                // 1. Mark original missions as consolidated
-                missionsToConsolidate.forEach(mission => {
-                    const req = requests.find(r => r.id === mission.id);
-                    if (req) {
-                        req.isConsolidated = true;
-                    }
-                });
-
-                // 2. Create the new 'delivered_basket' entry
-                const totalQuantity = missionsToConsolidate.reduce((sum, r) => sum + r.quantity, 0);
-                const greenhouseNames = [...new Set(missionsToConsolidate.map(r => r.greenhouseName))].join(', ');
-
-                const newDeliveryReport = {
-                    id: Date.now(),
-                    type: 'delivered_basket',
-                    status: 'in_progress_to_sorting', // Initial status
-                    quantity: totalQuantity,
-                    greenhouseName: greenhouseNames, // This is the consolidated list of names
-                    driverId: driver.id,
-                    driverName: driver.fullname,
-                    driverLicensePlate: driver.licensePlate,
-                    sortingCenterId: sortingCenter.id,
-                    sortingCenterName: sortingCenter.fullname,
-                    createdAt: new Date().toISOString(),
-                    completedAt: null,
-                    consolidatedRequestIds: missionsToConsolidate.map(r => r.id)
-                };
-
-                requests.push(newDeliveryReport);
-                localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                return { success: true, request: newDeliveryReport };
+            async createConsolidatedDelivery(missionsToConsolidate) {
+                return this._fetch(`${API_BASE_URL}/requests/consolidate`, { method: 'POST', body: JSON.stringify({ missionIds: missionsToConsolidate.map(m => m.id) }) });
             },
-
-            // Called by sorting center's cancelSortingDelivery
-            async rejectConsolidatedDelivery(deliveryRequestId) {
-                await loadDataFromServer();
-                console.log(`[API STUB] Rejecting consolidated delivery ${deliveryRequestId}`);
-
-                const deliveryRequest = requests.find(r => r.id === deliveryRequestId);
-                if (!deliveryRequest) {
-                    return { success: false, message: 'Delivery request not found.' };
-                }
-
-                // 1. Revert original missions
-                if (deliveryRequest.consolidatedRequestIds) {
-                    deliveryRequest.consolidatedRequestIds.forEach(reqId => {
-                        const originalReq = requests.find(r => r.id === reqId);
-                        if (originalReq) {
-                            originalReq.isConsolidated = false;
-                        }
-                    });
-                }
-
-                // 2. Delete the delivery request itself
-                const initialLength = requests.length;
-                requests = requests.filter(r => r.id !== deliveryRequestId);
-                if (requests.length < initialLength) {
-                    localStorage.setItem('agritrack_requests', JSON.stringify(requests));
-                    return { success: true };
-                }
-                return { success: false, message: 'Failed to delete delivery request.' }; // Should not happen
+            async rejectConsolidatedDelivery(deliveryRequestId, reason) {
+                return this._fetch(`${API_BASE_URL}/requests/${deliveryRequestId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
             }
         };
 
-        // --- End API Simulation ---
+
+        // --- End API ---
 
         // Authentication Functions
         function showRoleSelection() {
@@ -1255,16 +928,9 @@
 
             if (response.success && response.token) {
                 localStorage.setItem('token', response.token);
+                currentUser = response.user; // The server should return the user object on successful registration
                 showToast('ثبت نام با موفقیت انجام شد. در حال ورود...', 'success');
-                // Now try to fetch the user data with the new token
-                const authResponse = await api.getAuthUser(response.token);
-                if (authResponse.success) {
-                    currentUser = authResponse.user;
-                    await showMainApp();
-                } else {
-                    showToast('خطا در احراز هویت پس از ثبت نام.', 'error');
-                    logout(); // Clear bad token and go to landing
-                }
+                await showMainApp();
             } else {
                 showToast(response.message || 'خطا در ثبت نام. لطفاً دوباره تلاش کنید.', 'error');
             }
@@ -1292,6 +958,70 @@
                 showToast(response.message || 'نام کاربری یا رمز عبور اشتباه است', 'error');
             }
         }
+
+        /* === OLD PASSWORD RECOVERY FUNCTIONS - COMMENTED OUT ===
+        // NEW PASSWORD RECOVERY FUNCTIONS
+        function handlePasswordRecovery(event) {
+            event.preventDefault();
+            loadDataFromStorage();
+            const phone = document.getElementById('recovery-phone').value;
+            const user = users.find(u => u.username === phone || u.phone === phone);
+
+            if (user) {
+                // In a real app, you would send an SMS here.
+                // For this simulation, we'll store a mock verification code.
+                const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
+                sessionStorage.setItem('recovery_code', verificationCode);
+                sessionStorage.setItem('recovery_phone', phone);
+
+                console.log(`کد تایید برای ${phone}: ${verificationCode}`); // For debugging
+                showToast(`کد تایید (تستی): ${verificationCode}`, 'info');
+
+                document.getElementById('recovery-phone-display').textContent = phone;
+                document.getElementById('recovery-step-1').classList.add('hidden');
+                document.getElementById('recovery-step-2').classList.remove('hidden');
+            } else {
+                showToast('کاربری با این شماره تلفن یافت نشد', 'error');
+            }
+        }
+
+        function verifyRecoveryCode(event) {
+            event.preventDefault();
+            const code = document.getElementById('recovery-code').value;
+            const newPassword = document.getElementById('recovery-new-password').value;
+            const storedCode = sessionStorage.getItem('recovery_code');
+            const phone = sessionStorage.getItem('recovery_phone');
+
+            if (code === storedCode) {
+                resetPassword(phone, newPassword);
+            } else {
+                showToast('کد تایید اشتباه است', 'error');
+            }
+        }
+
+        function resetPassword(phone, newPassword) {
+            loadDataFromStorage();
+            const userIndex = users.findIndex(u => u.username === phone || u.phone === phone);
+            if (userIndex !== -1) {
+                users[userIndex].password = newPassword;
+                saveDataToStorage();
+                
+                // Cleanup session storage
+                sessionStorage.removeItem('recovery_code');
+                sessionStorage.removeItem('recovery_phone');
+
+                showToast('رمز عبور با موفقیت تغییر کرد. لطفاً با رمز جدید وارد شوید.', 'success');
+                
+                // Hide recovery form and show login form
+                document.getElementById('recovery-step-2').classList.add('hidden');
+                document.getElementById('recovery-step-1').classList.remove('hidden'); // Reset for next time
+                showLogin();
+            } else {
+                // This case should ideally not be reached if checks are done properly
+                showToast('خطا در بازیابی حساب. کاربر یافت نشد.', 'error');
+            }
+        }
+        */
 
         // === NEW PASSWORD RECOVERY FUNCTIONS (FROM USER) ===
         async function handlePasswordRecovery(event) {
@@ -2617,170 +2347,71 @@ function refreshAllMapMarkers() {
             }
         }
 
-        // Connection Functions - تصحیح شده با API واقعی
+        // Connection Functions
         async function requestConnection(targetId, sourceRole) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/users/connections`, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-auth-token': localStorage.getItem('token')
-                    },
-                    body: JSON.stringify({ 
-                        targetId, 
-                        sourceRole, 
-                        sourceId: currentUser.id,
-                        sourceName: currentUser.fullname,
-                        sourcePhone: currentUser.phone,
-                        sourceLicensePlate: currentUser.licensePlate,
-                        sourceAddress: currentUser.address
-                    })
-                });
-                
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    return { success: false, message: errorData.msg || 'خطا در ارسال درخواست' };
-                }
-                
-                const data = await res.json();
-                return { success: true, connection: data.connection };
-            } catch (err) {
-                console.error('Connection request error:', err);
-                return { success: false, message: 'خطا در ارتباط با سرور' };
+            await loadDataFromServer(); // Get latest data
+            const existingConnection = connections.find(c =>
+                c.sourceId === currentUser.id && c.targetId === parseInt(targetId)
+            );
+
+            if (existingConnection) {
+                showToast('درخواست اتصال قبلاً ارسال شده است', 'info');
+                return;
+            }
+
+            const connectionData = {
+                sourceId: currentUser.id,
+                sourceName: currentUser.fullname,
+                sourceRole: sourceRole,
+                sourcePhone: currentUser.phone,
+                targetId: parseInt(targetId),
+                createdAt: new Date().toISOString()
+            };
+
+            if (sourceRole === 'driver') {
+                connectionData.sourceLicensePlate = currentUser.licensePlate;
+            } else if (sourceRole === 'greenhouse') {
+                connectionData.sourceAddress = currentUser.address;
+            }
+
+            const response = await api.createConnection(connectionData);
+
+            if (response.success) {
+                // The server should create the notification for the target user.
+                showToast('درخواست اتصال ارسال شد', 'success');
+                // Refresh relevant UI parts
+                if (currentUser.role === 'greenhouse') loadGreenhouseConnections();
+                if (currentUser.role === 'driver') loadDriverConnections();
+            } else {
+                showToast(response.message || 'خطا در ارسال درخواست اتصال.', 'error');
             }
         }
 
         async function approveConnection(connectionId) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
-                    method: 'PUT',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-auth-token': localStorage.getItem('token')
-                    },
-                    body: JSON.stringify({ status: 'approved' })
-                });
-                
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    return { success: false, message: errorData.msg || 'خطا در تایید اتصال' };
-                }
-                
-                const data = await res.json();
-                return { success: true, connection: data.connection };
-            } catch (err) {
-                console.error('Connection approval error:', err);
-                return { success: false, message: 'خطا در ارتباط با سرور' };
+            const response = await api.updateConnection(connectionId, { status: 'approved' });
+            if (response.success) {
+                // The server should create the notification for the source user.
+                showToast('اتصال تایید شد', 'success');
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
+                loadSortingApprovedConnections();
+            } else {
+                showToast(response.message || 'خطا در تایید اتصال.', 'error');
             }
         }
 
         async function rejectConnection(connectionId) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
-                    method: 'DELETE',
-                    headers: { 
-                        'x-auth-token': localStorage.getItem('token')
-                    }
-                });
-                
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    return { success: false, message: errorData.msg || 'خطا در رد اتصال' };
-                }
-                
-                return { success: true };
-            } catch (err) {
-                console.error('Connection rejection error:', err);
-                return { success: false, message: 'خطا در ارتباط با سرور' };
-            }
-        }
-
-        async function toggleConnectionSuspension(connectionId) {
-            try {
-                // First get current connection state
-                const currentConnections = await loadConnectionsFromServer();
-                const connection = currentConnections.find(c => c.id === connectionId);
-                
-                if (!connection) {
-                    return { success: false, message: 'اتصال یافت نشد' };
-                }
-                
-                const newSuspendedState = !connection.suspended;
-                
-                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
-                    method: 'PUT',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-auth-token': localStorage.getItem('token')
-                    },
-                    body: JSON.stringify({ suspended: newSuspendedState })
-                });
-                
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    return { success: false, message: errorData.msg || 'خطا در تغییر وضعیت اتصال' };
-                }
-                
-                const data = await res.json();
-                return { success: true, connection: data.connection };
-            } catch (err) {
-                console.error('Connection suspension error:', err);
-                return { success: false, message: 'خطا در ارتباط با سرور' };
-            }
-        }
-
-        async function disconnectFromCenter(connectionId) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/users/connections/${connectionId}`, {
-                    method: 'DELETE',
-                    headers: { 
-                        'x-auth-token': localStorage.getItem('token')
-                    }
-                });
-                
-                if (!res.ok) {
-                    const errorData = await res.json();
-                    return { success: false, message: errorData.msg || 'خطا در قطع اتصال' };
-                }
-                
-                return { success: true };
-            } catch (err) {
-                console.error('Disconnection error:', err);
-                return { success: false, message: 'خطا در ارتباط با سرور' };
-            }
-        }
-
-        async function requestDriverConnection() {
-            const select = document.getElementById('driver-sorting-center-select');
-            const targetId = select.value;
-            if (!targetId) {
-                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
-                return;
-            }
+            // We need the connection details before deleting it to send a notification.
+            await loadDataFromServer();
             
-            const response = await requestConnection(targetId, 'driver');
+            const response = await api.deleteConnection(connectionId);
             if (response.success) {
-                showToast('درخواست اتصال ارسال شد', 'success');
-                loadDriverConnections();
+                // The server should handle notifying the user (if desired).
+                showToast('درخواست اتصال رد شد', 'info');
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
             } else {
-                showToast(response.message || 'خطا در ارسال درخواست اتصال', 'error');
-            }
-        }
-
-        async function requestGreenhouseConnection() {
-            const select = document.getElementById('greenhouse-sorting-center-select');
-            const targetId = select.value;
-            if (!targetId) {
-                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
-                return;
-            }
-            
-            const response = await requestConnection(targetId, 'greenhouse');
-            if (response.success) {
-                showToast('درخواست اتصال ارسال شد', 'success');
-                loadGreenhouseConnections();
-            } else {
-                showToast(response.message || 'خطا در ارسال درخواست اتصال', 'error');
+                showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
             }
         }
 
@@ -2813,34 +2444,11 @@ function refreshAllMapMarkers() {
                         <span class="text-xs text-gray-500">${formatDate(req.createdAt)}</span>
                     </div>
                     <div class="flex space-x-2 space-x-reverse">
-                        <button onclick="handleApproveConnection(${req.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm">تایید</button>
-                        <button onclick="handleRejectConnection(${req.id})" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm">رد</button>
+                        <button onclick="approveConnection(${req.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm">تایید</button>
+                        <button onclick="rejectConnection(${req.id})" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm">رد</button>
                     </div>
                 </div>
             `}).join('');
-        }
-
-        async function handleApproveConnection(connectionId) {
-            const response = await approveConnection(connectionId);
-            if (response.success) {
-                showToast('اتصال تایید شد', 'success');
-                await loadDataFromServer(); // Reload data to reflect changes
-                loadSortingConnectionRequests();
-                loadSortingApprovedConnections();
-            } else {
-                showToast(response.message || 'خطا در تایید اتصال.', 'error');
-            }
-        }
-
-        async function handleRejectConnection(connectionId) {
-            const response = await rejectConnection(connectionId);
-            if (response.success) {
-                showToast('درخواست اتصال رد شد', 'info');
-                await loadDataFromServer(); // Reload data to reflect changes
-                loadSortingConnectionRequests();
-            } else {
-                showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
-            }
         }
 
         function loadSortingApprovedConnections() {
@@ -2876,8 +2484,8 @@ function refreshAllMapMarkers() {
                                 ${isSuspended ? '<p class="text-xs font-bold text-yellow-700">(معلق)</p>' : ''}
                             </div>
                             <div class="flex items-center space-x-2 space-x-reverse">
-                                <button onclick="handleToggleConnectionSuspension(${conn.id})" class="${suspendButtonClass} text-white px-2 py-1 rounded-lg text-xs">${suspendButtonText}</button>
-                                <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع</button>
+                                <button onclick="toggleConnectionSuspension(${conn.id})" class="${suspendButtonClass} text-white px-2 py-1 rounded-lg text-xs">${suspendButtonText}</button>
+                                <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع</button>
                             </div>
                         </div>
                     `;
@@ -2896,7 +2504,7 @@ function refreshAllMapMarkers() {
                         <div>
                             <h5 class="font-semibold">${conn.sourceName}</h5>
                         </div>
-                        <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع اتصال</button>
+                        <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded-lg text-xs">قطع اتصال</button>
                     </div>
                 `).join('');
                 html += '</div>';
@@ -2907,36 +2515,26 @@ function refreshAllMapMarkers() {
             container.innerHTML = html;
         }
 
-        async function handleToggleConnectionSuspension(connectionId) {
-            const response = await toggleConnectionSuspension(connectionId);
+        async function toggleConnectionSuspension(connectionId) {
+            // Find the current state to toggle it
+            await loadDataFromServer();
+            const connection = connections.find(c => c.id === connectionId);
+            if (!connection) {
+                showToast('اتصال یافت نشد.', 'error');
+                return;
+            }
+            const newSuspendedState = !connection.suspended;
+
+            const response = await api.updateConnection(connectionId, { suspended: newSuspendedState });
+
             if (response.success) {
-                showToast(`اتصال راننده با موفقیت ${response.connection.suspended ? 'معلق' : 'فعال'} شد.`, 'success');
+                showToast(`اتصال راننده با موفقیت ${newSuspendedState ? 'معلق' : 'فعال'} شد.`, 'success');
                 await loadDataFromServer(); // Reload data
                 // Refresh the UI
                 loadSortingApprovedConnections();
                 loadAvailableDrivers();
             } else {
                 showToast(response.message || 'خطا در تغییر وضعیت اتصال.', 'error');
-            }
-        }
-
-        async function handleDisconnectFromCenter(connectionId) {
-            const response = await disconnectFromCenter(connectionId);
-            if (response.success) {
-                showToast('اتصال با موفقیت لغو شد', 'success');
-                
-                await loadDataFromServer();
-                if (currentUser.role === 'greenhouse') {
-                    loadGreenhouseConnections();
-                    loadSortingCenters();
-                } else if (currentUser.role === 'driver') {
-                    loadDriverConnections();
-                } else if (currentUser.role === 'sorting') {
-                    loadSortingConnectionRequests();
-                    loadSortingApprovedConnections();
-                }
-            } else {
-                showToast(response.message || 'خطا در قطع اتصال.', 'error');
             }
         }
 
@@ -2968,6 +2566,16 @@ function refreshAllMapMarkers() {
                     </div>
                 </div>
             `).join('');
+        }
+
+        async function requestDriverConnection() {
+            const select = document.getElementById('driver-sorting-center-select');
+            const targetId = select.value;
+            if (!targetId) {
+                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
+                return;
+            }
+            await requestConnection(targetId, 'driver');
         }
 
         function loadDriverConnections() {
@@ -3020,7 +2628,7 @@ function refreshAllMapMarkers() {
                                 <h4 class="font-semibold">${center ? center.fullname : 'مرکز حذف شده'}</h4>
                                 <p class="text-sm font-medium px-2 py-1 rounded-full inline-block ${statusClass}">${statusText}</p>
                             </div>
-                            <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
+                            <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
                                 لغو اتصال
                             </button>
                         </div>
@@ -3031,6 +2639,38 @@ function refreshAllMapMarkers() {
 
 
         // Greenhouse Functions
+        async function requestGreenhouseConnection() {
+            const select = document.getElementById('greenhouse-sorting-center-select');
+            const targetId = select.value;
+            if (!targetId) {
+                showToast('لطفاً یک مرکز سورتینگ را انتخاب کنید', 'error');
+                return;
+            }
+            await requestConnection(targetId, 'greenhouse');
+        }
+
+        async function disconnectFromCenter(connectionId) {
+            const response = await api.deleteConnection(connectionId);
+
+            if (response.success) {
+                // The server should handle notifying the other party.
+                showToast('اتصال با موفقیت لغو شد', 'success');
+                
+                await loadDataFromServer();
+                if (currentUser.role === 'greenhouse') {
+                    loadGreenhouseConnections();
+                    loadSortingCenters();
+                } else if (currentUser.role === 'driver') {
+                    loadDriverConnections();
+                } else if (currentUser.role === 'sorting') {
+                    loadSortingConnectionRequests();
+                    loadSortingApprovedConnections();
+                }
+            } else {
+                showToast(response.message || 'خطا در قطع اتصال.', 'error');
+            }
+        }
+
         function loadGreenhouseConnections() {
             const container = document.getElementById('greenhouse-connections-list');
             if (!container) return;
@@ -3101,7 +2741,7 @@ function refreshAllMapMarkers() {
                                 <h4 class="font-semibold">${center ? center.fullname : 'مرکز حذف شده'}</h4>
                                 <p class="text-sm font-medium px-2 py-1 rounded-full inline-block ${statusClass}">${statusText}</p>
                             </div>
-                            <button onclick="handleDisconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
+                            <button onclick="disconnectFromCenter(${conn.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded-lg text-sm">
                                 لغو اتصال
                             </button>
                         </div>
@@ -4040,7 +3680,6 @@ function refreshAllMapMarkers() {
                 const result = moveAlongPath(request.routePath, request.currentSimLatLng, request.routeIndex, distanceToTravel);
                 
                 request.currentSimLatLng = result.latlng;
-                request.routeIndex = result.newIndex;
                 currentUser.location = { lat: result.latlng.lat, lng: result.latlng.lng };
                 
                 updateDriverLocationInStorage();
