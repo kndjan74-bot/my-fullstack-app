@@ -1,11 +1,12 @@
 {
   "app": "soodcity",
   "port": 3000,
+  "platform": "node",
+  "rootDir": "backend",
   "build": {
     "location": "iran"
   },
-  "disks": [],
-  "platform": "node",
-  "rootDir": "backend"
+  "disks": []
+  
   
 }
