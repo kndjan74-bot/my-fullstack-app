@@ -3,7 +3,7 @@
   
 {
   "app": "soodcity",
- 
+ "port":3000,
   "platform": "node",
   "rootDir": "backend",
   "build": {
