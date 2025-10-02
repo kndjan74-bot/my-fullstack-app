@@ -1,9 +1,27 @@
+
 {
-  "app": "soodcity",
-  "port": 3000,
-  "build": {
-    "location": "iran"
-  },
-  "disks": []
-  
+  "apps": [
+    {
+      "name": "soodcity",
+       "port": 3000,
+      "platform": "node",
+      "root": "backend",
+      "build": {
+        "command": "npm install"
+      },
+      "start": {
+        "command": "node server.js"
+      }
+    },
+    {
+      "name": "soodcityb",
+       "port": 3000,
+      "platform": "static", 
+      "root": "frontend",
+      "build": {
+        "command": "npm run build",
+        "directory": "build"
+      }
+    }
+  ]
 }
