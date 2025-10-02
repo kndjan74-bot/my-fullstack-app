@@ -1,10 +1,8 @@
 {
-  "platform": "node",
-   "port": 3000,
-  "build": {
-    "command": "npm install"
-  },
-  "start": {
-    "command": "node server.js"
-  }
+"app":"soodcity",
+"port":3000,
+"build":{
+"location":"iran"
+},
+"disks":[]
 }
