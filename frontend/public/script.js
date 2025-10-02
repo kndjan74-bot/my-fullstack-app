@@ -2263,6 +2263,13 @@ function refreshAllMapMarkers() {
             
             // This logic runs after the UI state is updated
             await loadDataFromServer();
+
+            // It's possible that loadDataFromServer failed and triggered a logout.
+            // We need to check if the user is still logged in before proceeding.
+            if (!currentUser) {
+                console.log("User was logged out during data fetch. Aborting showMainApp.");
+                return; 
+            }
             
             // Update header with dynamic role icon
             const headerTitle = document.getElementById('main-header-title');
