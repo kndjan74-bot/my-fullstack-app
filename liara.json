@@ -1,12 +1,14 @@
- 
+
+  
+  
 {
   "app": "soodcity",
-  "platform": "node",
-  
  
+  "platform": "node",
+  "rootDir": "backend",
   "build": {
     "command": "npm install && npm run build",
-    "directory": "backend"
+    "rootDir": "backend"
   },
   "start": {
     "command": "node backend/server.js"
