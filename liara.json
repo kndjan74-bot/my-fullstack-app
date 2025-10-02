@@ -1,16 +1,8 @@
-
-  
-  
 {
   "app": "soodcity",
- "port":3000,
+  "port": 3000,
   "platform": "node",
-  "rootDir": "backend",
-  "build": {
-    "command": "npm install && npm run build",
-    "rootDir": "backend"
-  },
-  "start": {
-    "command": "node backend/server.js"
-  }
+  "rootDir": "backend"
+  
+  
 }
