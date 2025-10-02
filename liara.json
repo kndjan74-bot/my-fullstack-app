@@ -4,5 +4,7 @@
   "build": {
     "location": "iran"
   },
-  "disks": []
+  "disks": [],
+  "platform": "static",
+  "rootDir": "frontend"
 }
