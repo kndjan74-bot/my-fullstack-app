@@ -1,5 +1,5 @@
 {"app":"soodcity",
-  "platform": "nodejs",
+  "platform": "node",
   "rootDir": "backend",
   "port":3000
 
