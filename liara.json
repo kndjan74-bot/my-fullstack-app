@@ -1,11 +1,16 @@
-{
+{"app":"soodcity",
   "platform": "nodejs",
-  "port":3000,
+
   "rootDir": "backend",
+  "port":3000,
+
+
   "build": {
+    "location":"iran",
     "command": "cd backend && npm install"
   },
   "start": {
     "command": "npm start"
-  }
+  },
+  "disks":[]
 }
