@@ -965,16 +965,11 @@
             
             const response = await api.login(phone, password);
             
-            if (response.success && response.token) {
+            if (response.success && response.token && response.user) {
                 localStorage.setItem('token', response.token);
-                const authResponse = await api.getAuthUser();
-                if (authResponse.success) {
-                    currentUser = authResponse.user;
-                    await showMainApp();
-                } else {
-                    showToast('خطا در دریافت اطلاعات کاربری.', 'error');
-                    logout();
-                }
+                // The user object is returned directly from the login response.
+                currentUser = response.user;
+                await showMainApp();
             } else {
                 showToast(response.message || 'نام کاربری یا رمز عبور اشتباه است', 'error');
             }
@@ -2621,9 +2616,9 @@ function refreshAllMapMarkers() {
             // --- Part 1: Update the dropdown list robustly ---
             const allSortingCenters = users.filter(u => u.role === 'sorting');
             // Important: Filter for driver-specific connections
-            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'driver');
-            const myConnectedCenterIds = myConnections.map(c => c.targetId);
-            const availableCenters = allSortingCenters.filter(center => !myConnectedCenterIds.includes(center.id));
+            const myApprovedConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'driver' && c.status === 'approved');
+            const myApprovedCenterIds = myApprovedConnections.map(c => c.targetId);
+            const availableCenters = allSortingCenters.filter(center => !myApprovedCenterIds.includes(center.id));
             
             const currentSelection = select.value; // Save current selection
 
@@ -2734,9 +2729,9 @@ function refreshAllMapMarkers() {
             const selectedValue = select.value; // Store current selection
 
             const allSortingCenters = users.filter(u => u.role === 'sorting');
-            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse');
-            const myConnectedCenterIds = myConnections.map(c => c.targetId);
-            const availableCenters = allSortingCenters.filter(center => !myConnectedCenterIds.includes(center.id));
+            const myApprovedConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse' && c.status === 'approved');
+            const myApprovedCenterIds = myApprovedConnections.map(c => c.targetId);
+            const availableCenters = allSortingCenters.filter(center => !myApprovedCenterIds.includes(center.id));
             
             // Clear existing options but keep the placeholder
             while (select.options.length > 1) {
