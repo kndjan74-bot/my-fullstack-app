@@ -1,5 +1,11 @@
 {
   "platform": "nodejs",
-  "rootDir": "backend"
- 
+  "port":3000,
+  "rootDir": "backend",
+  "build": {
+    "command": "cd backend && npm install"
+  },
+  "start": {
+    "command": "npm start"
+  }
 }
