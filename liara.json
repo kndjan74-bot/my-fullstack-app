@@ -1,12 +1,12 @@
-{"app":"soodcity",
-  "platform": "node",
-  "rootDir": "my-fullstack-app/backend",
-  "port":3000,
-
-
+{
+  "app": "soodcity",
+  "port": 3000,
+  
   "build": {
-    "location":"iran"
+    "location": "iran"
   },
- 
-  "disks":[]
+  "disks": []
+  
+  
 }
+
