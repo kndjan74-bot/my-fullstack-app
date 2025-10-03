@@ -1,10 +1,5 @@
 {
   "platform": "nodejs",
-  "rootDir": "backend",
-  "build": {
-    "command": "cd backend && npm install"
-  },
-  "start": {
-    "command": "npm start"
-  }
+  "rootDir": "backend"
+ 
 }
