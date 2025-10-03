@@ -14,7 +14,7 @@ app.use(cors({
         'http://localhost:3000',
         'http://localhost:5000',
         'capacitor://localhost',
-        'https://soodcity.netlify.app'
+        'https://soodcityb.liara.run'
     ],
     credentials: true
 }));
