@@ -26,9 +26,9 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/soodcity'
 .then(() => console.log('✅ Connected to MongoDB'))
 .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// Routes
+// 🔧 🔧 🔧 **ROUTES - این بخش را اصلاح کنید** 🔧 🔧 🔧
 app.use('/api/users', require('./routes/users'));
-app.use('/api/users', require('./routes/auth')); // این خط را اضافه کنید
+app.use('/api/auth', require('./routes/auth')); // ✅ این خط را اضافه کنید
 
 // ✅ Route های تست
 app.get('/api/test', (req, res) => {
@@ -57,7 +57,8 @@ app.get('/', (req, res) => {
             test: '/api/test',
             health: '/api/health',
             register: 'POST /api/users/register',
-            login: 'POST /api/users/login'
+            login: 'POST /api/users/login',
+            auth: 'GET /api/auth'  // ✅ این را هم اضافه کنید
         }
     });
 });
@@ -72,7 +73,8 @@ app.use((req, res) => {
             'GET /api/test',
             'GET /api/health', 
             'POST /api/users/register',
-            'POST /api/users/login'
+            'POST /api/users/login',
+            'GET /api/auth'  // ✅ این را هم اضافه کنید
         ]
     });
 });
@@ -83,4 +85,5 @@ app.listen(PORT, () => {
     console.log(`🌐 Web Frontend: ${process.env.WEB_URL}`);
     console.log(`📱 Mobile Frontend: ${process.env.MOBILE_URL}`);
     console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
+    console.log(`🔐 Auth URL: http://localhost:${PORT}/api/auth`); // ✅ اضافه کنید
 });

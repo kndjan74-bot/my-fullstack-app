@@ -769,9 +769,21 @@
             }
         }
 
-        // --- API ---
-        const API_BASE_URL = 'https://soodcity.liara.run/api';
+       // --- API ---
+const getApiBaseUrl = () => {
+  const host = window.location.hostname;
+  
+  // اگر از دامنه اصلی استفاده می‌شود
+  if (host === 'soodcity.ir' || host === 'www.soodcity.ir') {
+    return '/api';  // از relative path استفاده کن
+  } 
+  // اگر از دامنه liara استفاده می‌شود
+  else {
+    return 'https://soodcity.liara.run/api';
+  }
+};
 
+const API_BASE_URL = getApiBaseUrl();
         const api = {
             async _fetch(url, options = {}) {
                 const token = localStorage.getItem('token');
