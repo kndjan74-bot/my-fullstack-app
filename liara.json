@@ -1,6 +1,6 @@
 {"app":"soodcity",
   "platform": "node",
-  "rootDir": "backend",
+  "rootDir": "my-fullstack-app/backend",
   "port":3000,
 
 
