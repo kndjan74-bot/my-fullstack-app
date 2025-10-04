@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const app = express();
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/soodcity', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@sabalan.liara.cloud:32460/my-app?authSource=admin', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
@@ -108,22 +108,12 @@ const AdSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-const NotificationSchema = new mongoose.Schema({
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    type: { type: String, required: true },
-    title: { type: String, required: true },
-    message: { type: String, required: true },
-    read: { type: Boolean, default: false },
-    createdAt: { type: Date, default: Date.now }
-});
-
 // ایجاد مدل‌ها
 const User = mongoose.model('User', UserSchema);
 const Connection = mongoose.model('Connection', ConnectionSchema);
 const Request = mongoose.model('Request', RequestSchema);
 const Message = mongoose.model('Message', MessageSchema);
 const Ad = mongoose.model('Ad', AdSchema);
-const Notification = mongoose.model('Notification', NotificationSchema);
 
 // Middleware
 app.use(cors({
@@ -181,7 +171,6 @@ app.post('/api/users/register', async (req, res) => {
     try {
         const { role, fullname, province, phone, password, address, licensePlate } = req.body;
 
-        // Check if user already exists
         const existingUser = await User.findOne({ phone });
         if (existingUser) {
             return res.status(400).json({
@@ -190,11 +179,9 @@ app.post('/api/users/register', async (req, res) => {
             });
         }
 
-        // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Create user
         const newUser = new User({
             role,
             fullname,
@@ -202,15 +189,11 @@ app.post('/api/users/register', async (req, res) => {
             phone,
             password: hashedPassword,
             address: address || '',
-            licensePlate: licensePlate || '',
-            location: { lat: 35.6892, lng: 51.3890 },
-            emptyBaskets: 0,
-            loadCapacity: 0
+            licensePlate: licensePlate || ''
         });
 
         await newUser.save();
 
-        // Create JWT token
         const token = jwt.sign(
             { id: newUser._id, phone: newUser.phone, role: newUser.role },
             JWT_SECRET,
@@ -247,7 +230,6 @@ app.post('/api/users/login', async (req, res) => {
     try {
         const { phone, password } = req.body;
 
-        // Find user
         const user = await User.findOne({ phone });
         if (!user) {
             return res.status(400).json({
@@ -256,7 +238,6 @@ app.post('/api/users/login', async (req, res) => {
             });
         }
 
-        // Check password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({
@@ -265,7 +246,6 @@ app.post('/api/users/login', async (req, res) => {
             });
         }
 
-        // Create JWT token
         const token = jwt.sign(
             { id: user._id, phone: user.phone, role: user.role },
             JWT_SECRET,
@@ -419,7 +399,6 @@ app.put('/api/users/password', auth, async (req, res) => {
             });
         }
 
-        // Verify current password
         const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch) {
             return res.status(400).json({
@@ -428,7 +407,6 @@ app.put('/api/users/password', auth, async (req, res) => {
             });
         }
 
-        // Hash new password
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
         await user.save();
@@ -451,7 +429,6 @@ app.delete('/api/users', auth, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // Delete user and related data
         await Promise.all([
             User.findByIdAndDelete(userId),
             Connection.deleteMany({ $or: [{ sourceId: userId }, { targetId: userId }] }),
@@ -473,8 +450,7 @@ app.delete('/api/users', auth, async (req, res) => {
                     { sellerId: userId }, 
                     { buyerId: userId }
                 ] 
-            }),
-            Notification.deleteMany({ userId })
+            })
         ]);
 
         res.json({
@@ -555,7 +531,6 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             });
         }
 
-        // Check ownership
         if ((ad.adType === 'supply' && ad.sellerId.toString() !== req.user.id) || 
             (ad.adType === 'demand' && ad.buyerId.toString() !== req.user.id)) {
             return res.status(403).json({
@@ -564,7 +539,6 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             });
         }
 
-        // Remove ad and related messages
         await Promise.all([
             Ad.findByIdAndDelete(adId),
             Message.deleteMany({ adId: parseInt(adId) })
@@ -694,16 +668,20 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === CONNECTIONS ROUTES ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
+        console.log('📡 GET /api/connections - User:', req.user.id);
+        
         const connections = await Connection.find()
             .populate('sourceId', 'fullname role phone licensePlate address')
             .populate('targetId', 'fullname role phone');
+        
+        console.log('✅ Found connections:', connections.length);
         
         res.json({
             success: true,
             connections
         });
     } catch (error) {
-        console.error('Get connections error:', error);
+        console.error('❌ GET /api/connections error:', error);
         res.status(500).json({
             success: false,
             message: 'Server error in getting connections'
@@ -713,57 +691,103 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        const { targetId } = req.body;
-        const sourceUser = await User.findById(req.user.id);
+        console.log('📡 POST /api/connections - Body:', req.body);
+        console.log('📡 POST /api/connections - User:', req.user);
 
+        const { targetId } = req.body;
+
+        if (!targetId) {
+            console.error('❌ Missing targetId');
+            return res.status(400).json({
+                success: false,
+                message: 'Target ID is required'
+            });
+        }
+
+        const sourceUser = await User.findById(req.user.id);
         if (!sourceUser) {
+            console.error('❌ Source user not found:', req.user.id);
             return res.status(404).json({
                 success: false,
                 message: 'Source user not found'
             });
         }
 
-        // Check for existing connection
+        console.log('✅ Source user found:', sourceUser.fullname);
+
+        const targetUser = await User.findById(targetId);
+        if (!targetUser) {
+            console.error('❌ Target user not found:', targetId);
+            return res.status(404).json({
+                success: false,
+                message: 'Target user not found'
+            });
+        }
+
+        console.log('✅ Target user found:', targetUser.fullname, '- Role:', targetUser.role);
+
+        if (targetUser.role !== 'sorting') {
+            console.error('❌ Target user is not a sorting center:', targetUser.role);
+            return res.status(400).json({
+                success: false,
+                message: 'Can only connect to sorting centers'
+            });
+        }
+
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
             targetId: targetId
         });
 
         if (existingConnection) {
+            console.log('⚠️ Connection already exists:', existingConnection._id);
             return res.status(400).json({
                 success: false,
                 message: 'Connection request already sent'
             });
         }
 
-        const newConnection = new Connection({
+        const connectionData = {
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
             targetId: targetId,
             status: 'pending'
-        });
+        };
 
-        // Add additional fields based on role
-        if (sourceUser.role === 'driver') {
-            newConnection.sourceLicensePlate = sourceUser.licensePlate;
-        } else if (sourceUser.role === 'greenhouse') {
-            newConnection.sourceAddress = sourceUser.address;
+        if (sourceUser.role === 'driver' && sourceUser.licensePlate) {
+            connectionData.sourceLicensePlate = sourceUser.licensePlate;
+            console.log('🚗 Added license plate for driver:', sourceUser.licensePlate);
+        } else if (sourceUser.role === 'greenhouse' && sourceUser.address) {
+            connectionData.sourceAddress = sourceUser.address;
+            console.log('🏡 Added address for greenhouse:', sourceUser.address);
         }
 
+        console.log('📝 Creating connection with data:', connectionData);
+
+        const newConnection = new Connection(connectionData);
         await newConnection.save();
+
+        console.log('✅ Connection created successfully:', newConnection._id);
+
+        const populatedConnection = await Connection.findById(newConnection._id)
+            .populate('sourceId', 'fullname role phone licensePlate address')
+            .populate('targetId', 'fullname role phone');
 
         res.status(201).json({
             success: true,
-            connection: newConnection
+            connection: populatedConnection,
+            message: 'Connection request sent successfully'
         });
 
     } catch (error) {
-        console.error('Create connection error:', error);
+        console.error('❌ POST /api/connections - Detailed error:', error);
+        console.error('❌ Error stack:', error.stack);
+        
         res.status(500).json({
             success: false,
-            message: 'Server error in creating connection'
+            message: 'Server error in creating connection: ' + error.message
         });
     }
 });
@@ -781,7 +805,6 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // Check authorization - only sorting center can approve/reject
         if (connection.targetId.toString() !== req.user.id) {
             return res.status(403).json({
                 success: false,
@@ -825,7 +848,6 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // Check authorization
         if (connection.sourceId.toString() !== req.user.id && connection.targetId.toString() !== req.user.id) {
             return res.status(403).json({
                 success: false,
@@ -949,7 +971,6 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        // Check authorization
         if (request.greenhouseId.toString() !== req.user.id && request.sortingCenterId.toString() !== req.user.id) {
             return res.status(403).json({
                 success: false,
@@ -986,7 +1007,7 @@ app.get('/api/sorting/connection-requests', auth, async (req, res) => {
         const pendingConnections = await Connection.find({
             targetId: req.user.id,
             status: 'pending'
-        }).populate('sourceId', 'fullname role phone licensePlate address');
+        }).populate('sourceId', 'fullname role phone licensePlate address province');
 
         res.json({
             success: true,
@@ -1213,7 +1234,6 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
 
         await newRequest.save();
 
-        // Mark original missions as consolidated
         await Request.updateMany(
             { _id: { $in: missionIds } },
             { $set: { isConsolidated: true } }
@@ -1301,6 +1321,60 @@ app.post('/api/users/reset-password', async (req, res) => {
     }
 });
 
+// === DEBUG ROUTES ===
+app.get('/api/debug/system', auth, async (req, res) => {
+    try {
+        console.log('🔧 Debug system request from user:', req.user.id);
+
+        const currentUser = await User.findById(req.user.id);
+        const allUsers = await User.find({}, 'fullname role phone');
+        const allConnections = await Connection.find()
+            .populate('sourceId', 'fullname role')
+            .populate('targetId', 'fullname role');
+
+        const userConnections = await Connection.find({
+            $or: [
+                { sourceId: req.user.id },
+                { targetId: req.user.id }
+            ]
+        })
+        .populate('sourceId', 'fullname role phone')
+        .populate('targetId', 'fullname role phone');
+
+        res.json({
+            success: true,
+            debug: {
+                currentUser: {
+                    id: currentUser?._id,
+                    fullname: currentUser?.fullname,
+                    role: currentUser?.role,
+                    phone: currentUser?.phone
+                },
+                users: {
+                    total: allUsers.length,
+                    list: allUsers
+                },
+                connections: {
+                    total: allConnections.length,
+                    userConnections: userConnections.length,
+                    all: allConnections,
+                    user: userConnections
+                },
+                database: {
+                    status: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+                    name: mongoose.connection.name
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ Debug system error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Debug error: ' + error.message
+        });
+    }
+});
+
 // === CATCH-ALL ROUTE ===
 app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -1311,4 +1385,5 @@ app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
+    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
 });
