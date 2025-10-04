@@ -1,5 +1,5 @@
 const UserSchema = new mongoose.Schema({
-    id: { type: Number, unique: true }, // اضافه کردن فیلد id عددی
+    id: { type: Number, unique: true, sparse: true }, // اضافه کردن فیلد id عددی
     role: { type: String, required: true, enum: ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'] },
     fullname: { type: String, required: true },
     province: { type: String, required: true },
@@ -18,11 +18,16 @@ const UserSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// تابع برای تولید خودکار id عددی
+// middleware برای تولید خودکار id عددی
 UserSchema.pre('save', async function(next) {
     if (this.isNew && !this.id) {
-        const lastUser = await this.constructor.findOne().sort({ id: -1 });
-        this.id = lastUser ? lastUser.id + 1 : 1;
+        try {
+            const lastUser = await this.constructor.findOne().sort({ id: -1 });
+            this.id = lastUser ? lastUser.id + 1 : 1;
+            console.log(`🔢 تولید id عددی: ${this.id} برای کاربر ${this.fullname}`);
+        } catch (error) {
+            console.error('خطا در تولید id عددی:', error);
+        }
     }
     next();
 });

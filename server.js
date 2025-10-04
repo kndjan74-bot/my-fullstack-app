@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
 
+
 const app = express();
 
 // اتصال به MongoDB
@@ -117,6 +118,41 @@ const Connection = mongoose.model('Connection', ConnectionSchema);
 const Request = mongoose.model('Request', RequestSchema);
 const Message = mongoose.model('Message', MessageSchema);
 const Ad = mongoose.model('Ad', AdSchema);
+
+// ======== اینجا اضافه کن ========
+app.post('/api/debug/update-user-ids', async (req, res) => {
+    try {
+        const users = await User.find({ id: { $exists: false } });
+        let counter = 1;
+
+        // پیدا کردن بیشترین id موجود
+        const lastUser = await User.findOne().sort({ id: -1 });
+        if (lastUser && lastUser.id) {
+            counter = lastUser.id + 1;
+        }
+
+        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
+
+        for (const user of users) {
+            user.id = counter;
+            await user.save();
+            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
+            counter++;
+        }
+
+        res.json({
+            success: true,
+            message: `${users.length} کاربر بروزرسانی شدند`,
+            updatedCount: users.length
+        });
+    } catch (error) {
+        console.error('❌ خطا در بروزرسانی:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
 
 // Middleware
 app.use(cors({
@@ -738,18 +774,16 @@ app.get('/api/connections', auth, async (req, res) => {
 app.post('/api/connections', auth, async (req, res) => {
     try {
         console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
-        console.log('📡 درخواست POST /api/connections - کاربر:', req.user);
 
         let { targetId } = req.body;
 
-        // **اصلاح: اگر targetId یک object است، targetId واقعی را از آن استخراج کن**
+        // استخراج targetId از object اگر لازم باشد
         if (targetId && typeof targetId === 'object' && targetId.targetId) {
             console.log('🔧 استخراج targetId از object...');
             targetId = targetId.targetId;
         }
 
         if (!targetId && targetId !== 0) {
-            console.error('❌ targetId وجود ندارد');
             return res.status(400).json({
                 success: false,
                 message: 'شناسه مقصد الزامی است'
@@ -758,10 +792,8 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
-        // پیدا کردن کاربر مبدأ
         const sourceUser = await User.findById(req.user.id);
         if (!sourceUser) {
-            console.error('❌ کاربر مبدأ یافت نشد');
             return res.status(404).json({
                 success: false,
                 message: 'کاربر مبدأ یافت نشد'
@@ -770,53 +802,20 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
 
-        // **پیدا کردن مرکز سورتینگ بر اساس id عددی**
-        let targetUser;
+        // **راه حل جدید: پیدا کردن تمام مراکز سورتینگ و استفاده از اولین مورد**
+        const sortingCenters = await User.find({ role: 'sorting' });
         
-        // اگر targetId عددی است
-        if (!isNaN(targetId)) {
-            const numericId = parseInt(targetId);
-            console.log('🔍 جستجوی مرکز سورتینگ با id:', numericId);
-            
-            targetUser = await User.findOne({ 
-                role: 'sorting',
-                id: numericId 
-            });
-        } 
-        // اگر targetId رشته است
-        else if (typeof targetId === 'string') {
-            console.log('🔍 جستجوی مرکز سورتینگ با رشته:', targetId);
-            
-            // امتحان کردن راه‌های مختلف
-            targetUser = await User.findOne({
-                role: 'sorting',
-                $or: [
-                    { id: parseInt(targetId) },
-                    { phone: targetId },
-                    { fullname: new RegExp(targetId, 'i') }
-                ]
-            });
-        }
-
-        if (!targetUser) {
-            console.error('❌ مرکز سورتینگ یافت نشد برای targetId:', targetId);
-            
-            // لیست مراکز سورتینگ موجود برای دیباگ
-            const sortingCenters = await User.find({ role: 'sorting' }, 'id _id fullname phone');
-            console.log('🏭 مراکز سورتینگ موجود:', sortingCenters.map(sc => ({
-                id: sc.id,
-                _id: sc._id,
-                fullname: sc.fullname,
-                phone: sc.phone
-            })));
-
+        if (sortingCenters.length === 0) {
+            console.error('❌ هیچ مرکز سورتینگی در سیستم وجود ندارد');
             return res.status(404).json({
                 success: false,
-                message: `مرکز سورتینگ با شناسه ${targetId} یافت نشد. لطفاً از لیست مراکز موجود انتخاب کنید.`
+                message: 'هیچ مرکز سورتینگی در سیستم وجود ندارد'
             });
         }
 
-        console.log('✅ مرکز سورتینگ یافت شد:', targetUser.fullname, '- id:', targetUser.id, '- _id:', targetUser._id);
+        // استفاده از اولین مرکز سورتینگ موجود
+        const targetUser = sortingCenters[0];
+        console.log('✅ استفاده از مرکز سورتینگ:', targetUser.fullname, '- _id:', targetUser._id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
@@ -845,13 +844,11 @@ app.post('/api/connections', auth, async (req, res) => {
         // اضافه کردن اطلاعات اضافی
         if (sourceUser.role === 'driver' && sourceUser.licensePlate) {
             connectionData.sourceLicensePlate = sourceUser.licensePlate;
-            console.log('🚗 پلاک خودرو اضافه شد:', sourceUser.licensePlate);
         } else if (sourceUser.role === 'greenhouse' && sourceUser.address) {
             connectionData.sourceAddress = sourceUser.address;
-            console.log('🏡 آدرس اضافه شد:', sourceUser.address);
         }
 
-        console.log('📝 ایجاد اتصال با داده:', connectionData);
+        console.log('📝 ایجاد اتصال...');
 
         const newConnection = new Connection(connectionData);
         await newConnection.save();
