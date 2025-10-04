@@ -2623,12 +2623,13 @@ function refreshAllMapMarkers() {
             const currentConnectionsContainer = document.getElementById('driver-current-connections');
             if (!select || !currentConnectionsContainer) return;
 
-            // --- Part 1: Update the dropdown list robustly ---
+            // Get all connections for the current driver
+            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'driver');
+            
+            // --- Part 1: Update the dropdown list with *available* centers ---
             const allSortingCenters = users.filter(u => u.role === 'sorting');
-            // Important: Filter for driver-specific connections
-            const myApprovedConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'driver' && c.status === 'approved');
-            const myApprovedCenterIds = myApprovedConnections.map(c => c.targetId);
-            const availableCenters = allSortingCenters.filter(center => !myApprovedCenterIds.includes(center.id));
+            const connectedCenterIds = myConnections.map(c => c.targetId);
+            const availableCenters = allSortingCenters.filter(center => !connectedCenterIds.includes(center.id));
             
             const currentSelection = select.value; // Save current selection
 
@@ -2650,8 +2651,7 @@ function refreshAllMapMarkers() {
                 select.value = currentSelection;
             }
 
-            // --- Part 2: Update the list of current connections ---
-            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'driver');
+            // --- Part 2: Update the list of *current* connections ---
             if (myConnections.length === 0) {
                 currentConnectionsContainer.innerHTML = '<p class="text-gray-500 text-center py-4">هنوز اتصالی برقرار نشده است.</p>';
             } else {
@@ -2735,14 +2735,16 @@ function refreshAllMapMarkers() {
                 container.innerHTML = formHtml;
             }
 
-            // --- Part 2: Update the dropdown robustly ---
+            // Get all connections for the current greenhouse
+            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse');
+
+            // --- Part 2: Update the dropdown with *available* centers ---
             const select = document.getElementById('greenhouse-sorting-center-select');
             const selectedValue = select.value; // Store current selection
 
             const allSortingCenters = users.filter(u => u.role === 'sorting');
-            const myApprovedConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse' && c.status === 'approved');
-            const myApprovedCenterIds = myApprovedConnections.map(c => c.targetId);
-            const availableCenters = allSortingCenters.filter(center => !myApprovedCenterIds.includes(center.id));
+            const connectedCenterIds = myConnections.map(c => c.targetId);
+            const availableCenters = allSortingCenters.filter(center => !connectedCenterIds.includes(center.id));
             
             // Clear existing options but keep the placeholder
             while (select.options.length > 1) {
@@ -2763,9 +2765,8 @@ function refreshAllMapMarkers() {
                 select.selectedIndex = 0;
             }
 
-            // --- Part 3: Update the list of current connections ---
+            // --- Part 3: Update the list of *current* connections ---
             const currentConnectionsContainer = document.getElementById('greenhouse-current-connections');
-            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse');
             if (myConnections.length === 0) {
                 currentConnectionsContainer.innerHTML = '<p class="text-gray-500 text-center py-4">هنوز اتصالی برقرار نشده است.</p>';
             } else {
