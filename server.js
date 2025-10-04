@@ -737,12 +737,18 @@ app.get('/api/connections', auth, async (req, res) => {
 // === مسیرهای اتصالات - نسخه اصلاح شده ===
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        console.log('📡 درخواست POST /api/connections - داده:', req.body);
+        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
         console.log('📡 درخواست POST /api/connections - کاربر:', req.user);
 
         let { targetId } = req.body;
 
-        if (!targetId) {
+        // **اصلاح: اگر targetId یک object است، targetId واقعی را از آن استخراج کن**
+        if (targetId && typeof targetId === 'object' && targetId.targetId) {
+            console.log('🔧 استخراج targetId از object...');
+            targetId = targetId.targetId;
+        }
+
+        if (!targetId && targetId !== 0) {
             console.error('❌ targetId وجود ندارد');
             return res.status(400).json({
                 success: false,
@@ -750,91 +756,79 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
-        // تبدیل targetId به string برای بررسی
-        targetId = String(targetId).trim();
+        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
-        console.log('🔍 بررسی targetId:', targetId);
-
-        // اگر targetId عددی است، آن را به ObjectId تبدیل کنیم
-        let targetUser;
-        
-        // بررسی اگر targetId یک عدد است (فرمت فرانت‌اند)
-        if (/^\d+$/.test(targetId)) {
-            console.log('🔢 targetId عددی است، جستجو در دیتابیس...');
-            
-            // جستجوی کاربر بر اساس فیلدهای مختلف
-            targetUser = await User.findOne({
-                $or: [
-                    { id: parseInt(targetId) }, // اگر مدل User فیلد id عددی دارد
-                    { phone: targetId }, // یا شاید شماره تلفن است
-                    { _id: targetId } // یا شاید همان ObjectId است
-                ]
-            });
-            
-            if (!targetUser) {
-                console.error('❌ کاربر مقصد با شناسه عددی یافت نشد:', targetId);
-                return res.status(404).json({
-                    success: false,
-                    message: 'کاربر مقصد یافت نشد'
-                });
-            }
-            
-            // استفاده از _id کاربر پیدا شده
-            targetId = targetUser._id;
-            console.log('✅ کاربر با شناسه عددی یافت شد:', targetUser.fullname, '- ObjectId:', targetId);
-            
-        } else if (mongoose.Types.ObjectId.isValid(targetId)) {
-            // اگر targetId از قبل ObjectId معتبر است
-            console.log('✅ targetId از قبل ObjectId معتبر است');
-            targetUser = await User.findById(targetId);
-            
-            if (!targetUser) {
-                console.error('❌ کاربر مقصد با ObjectId یافت نشد:', targetId);
-                return res.status(404).json({
-                    success: false,
-                    message: 'کاربر مقصد یافت نشد'
-                });
-            }
-        } else {
-            console.error('❌ فرمت targetId نامعتبر است:', targetId);
-            return res.status(400).json({
-                success: false,
-                message: 'فرمت شناسه مقصد نامعتبر است'
-            });
-        }
-
+        // پیدا کردن کاربر مبدأ
         const sourceUser = await User.findById(req.user.id);
         if (!sourceUser) {
-            console.error('❌ کاربر مبدأ یافت نشد:', req.user.id);
+            console.error('❌ کاربر مبدأ یافت نشد');
             return res.status(404).json({
                 success: false,
                 message: 'کاربر مبدأ یافت نشد'
             });
         }
 
-        console.log('✅ کاربر مبدأ یافت شد:', sourceUser.fullname);
-        console.log('✅ کاربر مقصد یافت شد:', targetUser.fullname, '- نقش:', targetUser.role);
+        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
 
-        // بررسی اینکه کاربر مقصد حتماً مرکز سورتینگ باشد
-        if (targetUser.role !== 'sorting') {
-            console.error('❌ کاربر مقصد مرکز سورتینگ نیست:', targetUser.role);
-            return res.status(400).json({
-                success: false,
-                message: 'فقط می‌توان به مراکز سورتینگ متصل شد'
+        // **پیدا کردن مرکز سورتینگ بر اساس id عددی**
+        let targetUser;
+        
+        // اگر targetId عددی است
+        if (!isNaN(targetId)) {
+            const numericId = parseInt(targetId);
+            console.log('🔍 جستجوی مرکز سورتینگ با id:', numericId);
+            
+            targetUser = await User.findOne({ 
+                role: 'sorting',
+                id: numericId 
+            });
+        } 
+        // اگر targetId رشته است
+        else if (typeof targetId === 'string') {
+            console.log('🔍 جستجوی مرکز سورتینگ با رشته:', targetId);
+            
+            // امتحان کردن راه‌های مختلف
+            targetUser = await User.findOne({
+                role: 'sorting',
+                $or: [
+                    { id: parseInt(targetId) },
+                    { phone: targetId },
+                    { fullname: new RegExp(targetId, 'i') }
+                ]
             });
         }
+
+        if (!targetUser) {
+            console.error('❌ مرکز سورتینگ یافت نشد برای targetId:', targetId);
+            
+            // لیست مراکز سورتینگ موجود برای دیباگ
+            const sortingCenters = await User.find({ role: 'sorting' }, 'id _id fullname phone');
+            console.log('🏭 مراکز سورتینگ موجود:', sortingCenters.map(sc => ({
+                id: sc.id,
+                _id: sc._id,
+                fullname: sc.fullname,
+                phone: sc.phone
+            })));
+
+            return res.status(404).json({
+                success: false,
+                message: `مرکز سورتینگ با شناسه ${targetId} یافت نشد. لطفاً از لیست مراکز موجود انتخاب کنید.`
+            });
+        }
+
+        console.log('✅ مرکز سورتینگ یافت شد:', targetUser.fullname, '- id:', targetUser.id, '- _id:', targetUser._id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
-            targetId: targetId
+            targetId: targetUser._id
         });
 
         if (existingConnection) {
-            console.log('⚠️ اتصال از قبل وجود دارد:', existingConnection._id);
+            console.log('⚠️ اتصال تکراری');
             return res.status(400).json({
                 success: false,
-                message: 'درخواست اتصال قبلاً ارسال شده است'
+                message: 'قبلاً به این مرکز سورتینگ متصل شده‌اید'
             });
         }
 
@@ -844,17 +838,17 @@ app.post('/api/connections', auth, async (req, res) => {
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
-            targetId: targetId,
+            targetId: targetUser._id,
             status: 'pending'
         };
 
-        // اضافه کردن اطلاعات اضافی بر اساس نقش
+        // اضافه کردن اطلاعات اضافی
         if (sourceUser.role === 'driver' && sourceUser.licensePlate) {
             connectionData.sourceLicensePlate = sourceUser.licensePlate;
-            console.log('🚗 پلاک خودرو برای راننده اضافه شد:', sourceUser.licensePlate);
+            console.log('🚗 پلاک خودرو اضافه شد:', sourceUser.licensePlate);
         } else if (sourceUser.role === 'greenhouse' && sourceUser.address) {
             connectionData.sourceAddress = sourceUser.address;
-            console.log('🏡 آدرس برای گلخانه اضافه شد:', sourceUser.address);
+            console.log('🏡 آدرس اضافه شد:', sourceUser.address);
         }
 
         console.log('📝 ایجاد اتصال با داده:', connectionData);
@@ -862,9 +856,9 @@ app.post('/api/connections', auth, async (req, res) => {
         const newConnection = new Connection(connectionData);
         await newConnection.save();
 
-        console.log('✅ اتصال با موفقیت ایجاد شد:', newConnection._id);
+        console.log('✅ اتصال ایجاد شد با ID:', newConnection._id);
 
-        // بازگشت اتصال ایجاد شده با اطلاعات کامل
+        // بازگشت پاسخ
         const populatedConnection = await Connection.findById(newConnection._id)
             .populate('sourceId', 'fullname role phone licensePlate address')
             .populate('targetId', 'fullname role phone');
@@ -876,12 +870,10 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ POST /api/connections - خطای جزئیات:', error);
-        console.error('❌ رد خطا:', error.stack);
-        
+        console.error('💥 خطا در ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در ایجاد اتصال: ' + error.message
+            message: 'خطای سرور: ' + error.message
         });
     }
 });
