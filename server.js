@@ -734,12 +734,13 @@ app.get('/api/connections', auth, async (req, res) => {
     }
 });
 
+// === مسیرهای اتصالات - نسخه اصلاح شده ===
 app.post('/api/connections', auth, async (req, res) => {
     try {
         console.log('📡 درخواست POST /api/connections - داده:', req.body);
         console.log('📡 درخواست POST /api/connections - کاربر:', req.user);
 
-        const { targetId } = req.body;
+        let { targetId } = req.body;
 
         if (!targetId) {
             console.error('❌ targetId وجود ندارد');
@@ -749,8 +750,52 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
-        // بررسی معتبر بودن فرمت targetId
-        if (!mongoose.Types.ObjectId.isValid(targetId)) {
+        // تبدیل targetId به string برای بررسی
+        targetId = String(targetId).trim();
+
+        console.log('🔍 بررسی targetId:', targetId);
+
+        // اگر targetId عددی است، آن را به ObjectId تبدیل کنیم
+        let targetUser;
+        
+        // بررسی اگر targetId یک عدد است (فرمت فرانت‌اند)
+        if (/^\d+$/.test(targetId)) {
+            console.log('🔢 targetId عددی است، جستجو در دیتابیس...');
+            
+            // جستجوی کاربر بر اساس فیلدهای مختلف
+            targetUser = await User.findOne({
+                $or: [
+                    { id: parseInt(targetId) }, // اگر مدل User فیلد id عددی دارد
+                    { phone: targetId }, // یا شاید شماره تلفن است
+                    { _id: targetId } // یا شاید همان ObjectId است
+                ]
+            });
+            
+            if (!targetUser) {
+                console.error('❌ کاربر مقصد با شناسه عددی یافت نشد:', targetId);
+                return res.status(404).json({
+                    success: false,
+                    message: 'کاربر مقصد یافت نشد'
+                });
+            }
+            
+            // استفاده از _id کاربر پیدا شده
+            targetId = targetUser._id;
+            console.log('✅ کاربر با شناسه عددی یافت شد:', targetUser.fullname, '- ObjectId:', targetId);
+            
+        } else if (mongoose.Types.ObjectId.isValid(targetId)) {
+            // اگر targetId از قبل ObjectId معتبر است
+            console.log('✅ targetId از قبل ObjectId معتبر است');
+            targetUser = await User.findById(targetId);
+            
+            if (!targetUser) {
+                console.error('❌ کاربر مقصد با ObjectId یافت نشد:', targetId);
+                return res.status(404).json({
+                    success: false,
+                    message: 'کاربر مقصد یافت نشد'
+                });
+            }
+        } else {
             console.error('❌ فرمت targetId نامعتبر است:', targetId);
             return res.status(400).json({
                 success: false,
@@ -768,18 +813,9 @@ app.post('/api/connections', auth, async (req, res) => {
         }
 
         console.log('✅ کاربر مبدأ یافت شد:', sourceUser.fullname);
-
-        const targetUser = await User.findById(targetId);
-        if (!targetUser) {
-            console.error('❌ کاربر مقصد یافت نشد:', targetId);
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر مقصد یافت نشد'
-            });
-        }
-
         console.log('✅ کاربر مقصد یافت شد:', targetUser.fullname, '- نقش:', targetUser.role);
 
+        // بررسی اینکه کاربر مقصد حتماً مرکز سورتینگ باشد
         if (targetUser.role !== 'sorting') {
             console.error('❌ کاربر مقصد مرکز سورتینگ نیست:', targetUser.role);
             return res.status(400).json({
@@ -788,6 +824,7 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
+        // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
             targetId: targetId
@@ -801,6 +838,7 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
+        // ایجاد اتصال جدید
         const connectionData = {
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
@@ -810,6 +848,7 @@ app.post('/api/connections', auth, async (req, res) => {
             status: 'pending'
         };
 
+        // اضافه کردن اطلاعات اضافی بر اساس نقش
         if (sourceUser.role === 'driver' && sourceUser.licensePlate) {
             connectionData.sourceLicensePlate = sourceUser.licensePlate;
             console.log('🚗 پلاک خودرو برای راننده اضافه شد:', sourceUser.licensePlate);
@@ -825,6 +864,7 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ اتصال با موفقیت ایجاد شد:', newConnection._id);
 
+        // بازگشت اتصال ایجاد شده با اطلاعات کامل
         const populatedConnection = await Connection.findById(newConnection._id)
             .populate('sourceId', 'fullname role phone licensePlate address')
             .populate('targetId', 'fullname role phone');
