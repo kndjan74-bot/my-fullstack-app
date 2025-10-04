@@ -5,7 +5,6 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
 
-
 const app = express();
 
 // اتصال به MongoDB
@@ -16,8 +15,25 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9e
 .then(() => console.log('✅ متصل به MongoDB شد'))
 .catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
-// مدل‌های دیتابیس
+// ==================== مدل شمارنده برای ID عددی ====================
+const CounterSchema = new mongoose.Schema({
+    _id: { type: String, required: true },
+    seq: { type: Number, default: 0 }
+});
+const Counter = mongoose.model('Counter', CounterSchema);
+
+const getNextSequence = async (name) => {
+    const counter = await Counter.findByIdAndUpdate(
+        name,
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+    );
+    return counter.seq;
+};
+
+// ==================== مدل‌های دیتابیس با ID عددی ====================
 const UserSchema = new mongoose.Schema({
+    id: { type: Number, unique: true },
     role: { type: String, required: true, enum: ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'] },
     fullname: { type: String, required: true },
     province: { type: String, required: true },
@@ -37,27 +53,28 @@ const UserSchema = new mongoose.Schema({
 });
 
 const ConnectionSchema = new mongoose.Schema({
-    sourceId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    id: { type: Number, unique: true },
+    sourceId: { type: Number, required: true },
     sourceName: { type: String, required: true },
     sourceRole: { type: String, required: true },
     sourcePhone: { type: String, required: true },
     sourceLicensePlate: { type: String, default: '' },
     sourceAddress: { type: String, default: '' },
-    targetId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    targetId: { type: Number, required: true },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     suspended: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
 });
 
 const RequestSchema = new mongoose.Schema({
-    id: { type: Number, unique: true }, // اضافه کردن id عددی برای تطابق با فرانت‌اند
-    greenhouseId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    id: { type: Number, unique: true },
+    greenhouseId: { type: Number, required: true },
     greenhouseName: { type: String, required: true },
     greenhousePhone: { type: String, required: true },
     greenhouseAddress: { type: String, required: true },
-    sortingCenterId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    sortingCenterId: { type: Number, required: true },
     sortingCenterName: { type: String, required: true },
-    driverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    driverId: { type: Number },
     driverName: { type: String },
     driverPhone: { type: String },
     driverLicensePlate: { type: String },
@@ -83,11 +100,11 @@ const RequestSchema = new mongoose.Schema({
 });
 
 const MessageSchema = new mongoose.Schema({
-    id: { type: Number, unique: true }, // اضافه کردن id عددی
+    id: { type: Number, unique: true },
     adId: { type: Number, required: true },
-    senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    senderId: { type: Number, required: true },
     senderName: { type: String, required: true },
-    recipientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    recipientId: { type: Number, required: true },
     recipientName: { type: String, required: true },
     content: { type: String, default: '' },
     image: { type: String },
@@ -96,7 +113,7 @@ const MessageSchema = new mongoose.Schema({
 });
 
 const AdSchema = new mongoose.Schema({
-    id: { type: Number, unique: true }, // اضافه کردن id عددی
+    id: { type: Number, unique: true },
     product: { type: String, required: true },
     category: { type: String, required: true },
     quantity: { type: Number, required: true },
@@ -105,9 +122,9 @@ const AdSchema = new mongoose.Schema({
     image: { type: String },
     adType: { type: String, enum: ['supply', 'demand'], required: true },
     seller: { type: String },
-    sellerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    sellerId: { type: Number },
     buyer: { type: String },
-    buyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    buyerId: { type: Number },
     date: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
 });
@@ -119,42 +136,7 @@ const Request = mongoose.model('Request', RequestSchema);
 const Message = mongoose.model('Message', MessageSchema);
 const Ad = mongoose.model('Ad', AdSchema);
 
-// ======== اینجا اضافه کن ========
-app.post('/api/debug/update-user-ids', async (req, res) => {
-    try {
-        const users = await User.find({ id: { $exists: false } });
-        let counter = 1;
-
-        // پیدا کردن بیشترین id موجود
-        const lastUser = await User.findOne().sort({ id: -1 });
-        if (lastUser && lastUser.id) {
-            counter = lastUser.id + 1;
-        }
-
-        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
-
-        for (const user of users) {
-            user.id = counter;
-            await user.save();
-            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
-            counter++;
-        }
-
-        res.json({
-            success: true,
-            message: `${users.length} کاربر بروزرسانی شدند`,
-            updatedCount: users.length
-        });
-    } catch (error) {
-        console.error('❌ خطا در بروزرسانی:', error);
-        res.status(500).json({
-            success: false,
-            message: error.message
-        });
-    }
-});
-
-// Middleware
+// ==================== Middleware ====================
 app.use(cors({
     origin: [
         'https://www.soodcity.ir',
@@ -196,11 +178,7 @@ const auth = async (req, res, next) => {
     }
 };
 
-// تابع کمکی برای تولید ID عددی
-const generateNumericId = async (Model) => {
-    const lastDoc = await Model.findOne().sort({ id: -1 });
-    return lastDoc ? lastDoc.id + 1 : 1;
-};
+// ==================== مسیرهای اصلی API ====================
 
 // === بررسی سلامت ===
 app.get('/api/health', (req, res) => {
@@ -212,7 +190,34 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// === مسیرهای احراز هویت ===
+// === کاربران ===
+app.get('/api/users', auth, async (req, res) => {
+    try {
+        const users = await User.find({}, { password: 0 });
+        res.json({
+            success: true,
+            users: users.map(u => ({
+                id: u.id,
+                role: u.role,
+                fullname: u.fullname,
+                province: u.province,
+                phone: u.phone,
+                address: u.address,
+                licensePlate: u.licensePlate,
+                location: u.location,
+                emptyBaskets: u.emptyBaskets || 0,
+                loadCapacity: u.loadCapacity || 0
+            }))
+        });
+    } catch (error) {
+        console.error('خطای دریافت کاربران:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت کاربران'
+        });
+    }
+});
+
 app.post('/api/users/register', async (req, res) => {
     try {
         const { role, fullname, province, phone, password, address, licensePlate } = req.body;
@@ -229,6 +234,7 @@ app.post('/api/users/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const newUser = new User({
+            id: await getNextSequence('user'),
             role,
             fullname,
             province,
@@ -241,7 +247,7 @@ app.post('/api/users/register', async (req, res) => {
         await newUser.save();
 
         const token = jwt.sign(
-            { id: newUser._id, phone: newUser.phone, role: newUser.role },
+            { id: newUser.id, phone: newUser.phone, role: newUser.role },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
@@ -250,7 +256,7 @@ app.post('/api/users/register', async (req, res) => {
             success: true,
             token,
             user: {
-                id: newUser._id,
+                id: newUser.id,
                 role: newUser.role,
                 fullname: newUser.fullname,
                 province: newUser.province,
@@ -293,7 +299,7 @@ app.post('/api/users/login', async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user._id, phone: user.phone, role: user.role },
+            { id: user.id, phone: user.phone, role: user.role },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
@@ -302,7 +308,7 @@ app.post('/api/users/login', async (req, res) => {
             success: true,
             token,
             user: {
-                id: user._id,
+                id: user.id,
                 role: user.role,
                 fullname: user.fullname,
                 province: user.province,
@@ -326,7 +332,7 @@ app.post('/api/users/login', async (req, res) => {
 
 app.get('/api/users/auth', auth, async (req, res) => {
     try {
-        const user = await User.findById(req.user.id);
+        const user = await User.findOne({ id: req.user.id });
         if (!user) {
             return res.status(404).json({
                 success: false,
@@ -337,7 +343,7 @@ app.get('/api/users/auth', auth, async (req, res) => {
         res.json({
             success: true,
             user: {
-                id: user._id,
+                id: user.id,
                 role: user.role,
                 fullname: user.fullname,
                 province: user.province,
@@ -358,40 +364,12 @@ app.get('/api/users/auth', auth, async (req, res) => {
     }
 });
 
-// === مسیرهای کاربران ===
-app.get('/api/users', auth, async (req, res) => {
-    try {
-        const users = await User.find({}, { password: 0 });
-        res.json({
-            success: true,
-            users: users.map(u => ({
-                id: u._id,
-                role: u.role,
-                fullname: u.fullname,
-                province: u.province,
-                phone: u.phone,
-                address: u.address,
-                licensePlate: u.licensePlate,
-                location: u.location,
-                emptyBaskets: u.emptyBaskets || 0,
-                loadCapacity: u.loadCapacity || 0
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت کاربران:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت کاربران'
-        });
-    }
-});
-
 app.put('/api/users', auth, async (req, res) => {
     try {
         const { location, emptyBaskets, loadCapacity, address } = req.body;
         
-        const updatedUser = await User.findByIdAndUpdate(
-            req.user.id,
+        const updatedUser = await User.findOneAndUpdate(
+            { id: req.user.id },
             {
                 ...(location && { location }),
                 ...(emptyBaskets !== undefined && { emptyBaskets }),
@@ -411,7 +389,7 @@ app.put('/api/users', auth, async (req, res) => {
         res.json({
             success: true,
             user: {
-                id: updatedUser._id,
+                id: updatedUser.id,
                 role: updatedUser.role,
                 fullname: updatedUser.fullname,
                 province: updatedUser.province,
@@ -436,7 +414,7 @@ app.put('/api/users', auth, async (req, res) => {
 app.put('/api/users/password', auth, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
-        const user = await User.findById(req.user.id);
+        const user = await User.findOne({ id: req.user.id });
 
         if (!user) {
             return res.status(404).json({
@@ -476,7 +454,7 @@ app.delete('/api/users', auth, async (req, res) => {
         const userId = req.user.id;
 
         await Promise.all([
-            User.findByIdAndDelete(userId),
+            User.findOneAndDelete({ id: userId }),
             Connection.deleteMany({ $or: [{ sourceId: userId }, { targetId: userId }] }),
             Request.deleteMany({ 
                 $or: [
@@ -513,32 +491,29 @@ app.delete('/api/users', auth, async (req, res) => {
     }
 });
 
-// === مسیرهای آگهی‌ها ===
+// === آگهی‌ها ===
 app.get('/api/ads', auth, async (req, res) => {
     try {
-        const ads = await Ad.find().populate('sellerId buyerId', 'fullname phone');
+        const ads = await Ad.find();
         
-        // تبدیل به ساختار مورد انتظار فرانت‌اند
-        const formattedAds = ads.map(ad => ({
-            id: ad.id,
-            product: ad.product,
-            category: ad.category,
-            quantity: ad.quantity,
-            price: ad.price,
-            emoji: ad.emoji,
-            image: ad.image,
-            adType: ad.adType,
-            seller: ad.seller,
-            sellerId: ad.sellerId?._id || ad.sellerId,
-            buyer: ad.buyer,
-            buyerId: ad.buyerId?._id || ad.buyerId,
-            date: ad.date,
-            createdAt: ad.createdAt
-        }));
-
         res.json({
             success: true,
-            ads: formattedAds
+            ads: ads.map(ad => ({
+                id: ad.id,
+                product: ad.product,
+                category: ad.category,
+                quantity: ad.quantity,
+                price: ad.price,
+                emoji: ad.emoji,
+                image: ad.image,
+                adType: ad.adType,
+                seller: ad.seller,
+                sellerId: ad.sellerId,
+                buyer: ad.buyer,
+                buyerId: ad.buyerId,
+                date: ad.date,
+                createdAt: ad.createdAt
+            }))
         });
     } catch (error) {
         console.error('خطای دریافت آگهی‌ها:', error);
@@ -554,7 +529,7 @@ app.post('/api/ads', auth, async (req, res) => {
         const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
 
         const newAd = new Ad({
-            id: await generateNumericId(Ad),
+            id: await getNextSequence('ad'),
             product,
             category,
             quantity: parseInt(quantity),
@@ -587,7 +562,7 @@ app.post('/api/ads', auth, async (req, res) => {
 
 app.delete('/api/ads/:id', auth, async (req, res) => {
     try {
-        const adId = req.params.id;
+        const adId = parseInt(req.params.id);
         const ad = await Ad.findOne({ id: adId });
 
         if (!ad) {
@@ -597,8 +572,8 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             });
         }
 
-        if ((ad.adType === 'supply' && ad.sellerId.toString() !== req.user.id) || 
-            (ad.adType === 'demand' && ad.buyerId.toString() !== req.user.id)) {
+        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
+            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این آگهی را ندارید'
@@ -607,7 +582,7 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
 
         await Promise.all([
             Ad.findOneAndDelete({ id: adId }),
-            Message.deleteMany({ adId: parseInt(adId) })
+            Message.deleteMany({ adId: adId })
         ]);
 
         res.json({
@@ -624,7 +599,7 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
     }
 });
 
-// === مسیرهای پیام‌ها ===
+// === پیام‌ها ===
 app.get('/api/messages', auth, async (req, res) => {
     try {
         const userMessages = await Message.find({
@@ -632,25 +607,22 @@ app.get('/api/messages', auth, async (req, res) => {
                 { senderId: req.user.id },
                 { recipientId: req.user.id }
             ]
-        }).populate('senderId recipientId', 'fullname');
-
-        // تبدیل به ساختار مورد انتظار فرانت‌اند
-        const formattedMessages = userMessages.map(msg => ({
-            id: msg.id,
-            adId: msg.adId,
-            senderId: msg.senderId?._id || msg.senderId,
-            senderName: msg.senderName,
-            recipientId: msg.recipientId?._id || msg.recipientId,
-            recipientName: msg.recipientName,
-            content: msg.content,
-            image: msg.image,
-            read: msg.read,
-            createdAt: msg.createdAt
-        }));
+        });
 
         res.json({
             success: true,
-            messages: formattedMessages
+            messages: userMessages.map(msg => ({
+                id: msg.id,
+                adId: msg.adId,
+                senderId: msg.senderId,
+                senderName: msg.senderName,
+                recipientId: msg.recipientId,
+                recipientName: msg.recipientName,
+                content: msg.content,
+                image: msg.image,
+                read: msg.read,
+                createdAt: msg.createdAt
+            }))
         });
     } catch (error) {
         console.error('خطای دریافت پیام‌ها:', error);
@@ -666,7 +638,7 @@ app.post('/api/messages', auth, async (req, res) => {
         const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
 
         const newMessage = new Message({
-            id: await generateNumericId(Message),
+            id: await getNextSequence('message'),
             adId: parseInt(adId),
             senderId,
             senderName,
@@ -695,7 +667,7 @@ app.post('/api/messages', auth, async (req, res) => {
 app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res) => {
     try {
         const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-');
+        const [user1Id, user2Id] = conversationId.split('-').map(Number);
 
         await Message.updateMany(
             {
@@ -723,7 +695,7 @@ app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res
 app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) => {
     try {
         const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-');
+        const [user1Id, user2Id] = conversationId.split('-').map(Number);
 
         const result = await Message.deleteMany({
             $or: [
@@ -746,14 +718,12 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
     }
 });
 
-// === مسیرهای اتصالات ===
+// === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
         console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
         
-        const connections = await Connection.find()
-            .populate('sourceId', 'fullname role phone licensePlate address')
-            .populate('targetId', 'fullname role phone');
+        const connections = await Connection.find();
         
         console.log('✅ اتصالات یافت شده:', connections.length);
         
@@ -770,7 +740,6 @@ app.get('/api/connections', auth, async (req, res) => {
     }
 });
 
-// === مسیرهای اتصالات - نسخه اصلاح شده ===
 app.post('/api/connections', auth, async (req, res) => {
     try {
         console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
@@ -792,7 +761,7 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
-        const sourceUser = await User.findById(req.user.id);
+        const sourceUser = await User.findOne({ id: req.user.id });
         if (!sourceUser) {
             return res.status(404).json({
                 success: false,
@@ -815,12 +784,12 @@ app.post('/api/connections', auth, async (req, res) => {
 
         // استفاده از اولین مرکز سورتینگ موجود
         const targetUser = sortingCenters[0];
-        console.log('✅ استفاده از مرکز سورتینگ:', targetUser.fullname, '- _id:', targetUser._id);
+        console.log('✅ استفاده از مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
-            targetId: targetUser._id
+            targetId: targetUser.id
         });
 
         if (existingConnection) {
@@ -833,11 +802,12 @@ app.post('/api/connections', auth, async (req, res) => {
 
         // ایجاد اتصال جدید
         const connectionData = {
+            id: await getNextSequence('connection'),
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
-            targetId: targetUser._id,
+            targetId: targetUser.id,
             status: 'pending'
         };
 
@@ -853,16 +823,11 @@ app.post('/api/connections', auth, async (req, res) => {
         const newConnection = new Connection(connectionData);
         await newConnection.save();
 
-        console.log('✅ اتصال ایجاد شد با ID:', newConnection._id);
-
-        // بازگشت پاسخ
-        const populatedConnection = await Connection.findById(newConnection._id)
-            .populate('sourceId', 'fullname role phone licensePlate address')
-            .populate('targetId', 'fullname role phone');
+        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
         res.status(201).json({
             success: true,
-            connection: populatedConnection,
+            connection: newConnection,
             message: 'درخواست اتصال با موفقیت ارسال شد'
         });
 
@@ -877,10 +842,10 @@ app.post('/api/connections', auth, async (req, res) => {
 
 app.put('/api/connections/:id', auth, async (req, res) => {
     try {
-        const connectionId = req.params.id;
+        const connectionId = parseInt(req.params.id);
         const { status, suspended } = req.body;
 
-        const connection = await Connection.findById(connectionId);
+        const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
             return res.status(404).json({
                 success: false,
@@ -888,22 +853,21 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        if (connection.targetId.toString() !== req.user.id) {
+        if (connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
             });
         }
 
-        const updatedConnection = await Connection.findByIdAndUpdate(
-            connectionId,
+        const updatedConnection = await Connection.findOneAndUpdate(
+            { id: connectionId },
             {
                 ...(status && { status }),
                 ...(suspended !== undefined && { suspended })
             },
             { new: true }
-        ).populate('sourceId', 'fullname role phone licensePlate address')
-         .populate('targetId', 'fullname role phone');
+        );
 
         res.json({
             success: true,
@@ -921,8 +885,8 @@ app.put('/api/connections/:id', auth, async (req, res) => {
 
 app.delete('/api/connections/:id', auth, async (req, res) => {
     try {
-        const connectionId = req.params.id;
-        const connection = await Connection.findById(connectionId);
+        const connectionId = parseInt(req.params.id);
+        const connection = await Connection.findOne({ id: connectionId });
 
         if (!connection) {
             return res.status(404).json({
@@ -931,14 +895,14 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        if (connection.sourceId.toString() !== req.user.id && connection.targetId.toString() !== req.user.id) {
+        if (connection.sourceId !== req.user.id && connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این اتصال را ندارید'
             });
         }
 
-        await Connection.findByIdAndDelete(connectionId);
+        await Connection.findOneAndDelete({ id: connectionId });
 
         res.json({
             success: true,
@@ -954,44 +918,38 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
     }
 });
 
-// === مسیرهای درخواست‌ها ===
+// === درخواست‌ها ===
 app.get('/api/requests', auth, async (req, res) => {
     try {
-        const requests = await Request.find()
-            .populate('greenhouseId', 'fullname phone address')
-            .populate('sortingCenterId', 'fullname phone')
-            .populate('driverId', 'fullname phone licensePlate');
+        const requests = await Request.find();
         
-        // تبدیل به ساختار مورد انتظار فرانت‌اند
-        const formattedRequests = requests.map(req => ({
-            id: req.id,
-            greenhouseId: req.greenhouseId?._id || req.greenhouseId,
-            greenhouseName: req.greenhouseName,
-            greenhousePhone: req.greenhousePhone,
-            greenhouseAddress: req.greenhouseAddress,
-            sortingCenterId: req.sortingCenterId?._id || req.sortingCenterId,
-            sortingCenterName: req.sortingCenterName,
-            driverId: req.driverId?._id || req.driverId,
-            driverName: req.driverName,
-            driverPhone: req.driverPhone,
-            driverLicensePlate: req.driverLicensePlate,
-            type: req.type,
-            quantity: req.quantity,
-            description: req.description,
-            location: req.location,
-            status: req.status,
-            isPickupConfirmed: req.isPickupConfirmed,
-            isConsolidated: req.isConsolidated,
-            rejectionReason: req.rejectionReason,
-            assignedAt: req.assignedAt,
-            acceptedAt: req.acceptedAt,
-            completedAt: req.completedAt,
-            createdAt: req.createdAt
-        }));
-
         res.json({
             success: true,
-            requests: formattedRequests
+            requests: requests.map(req => ({
+                id: req.id,
+                greenhouseId: req.greenhouseId,
+                greenhouseName: req.greenhouseName,
+                greenhousePhone: req.greenhousePhone,
+                greenhouseAddress: req.greenhouseAddress,
+                sortingCenterId: req.sortingCenterId,
+                sortingCenterName: req.sortingCenterName,
+                driverId: req.driverId,
+                driverName: req.driverName,
+                driverPhone: req.driverPhone,
+                driverLicensePlate: req.driverLicensePlate,
+                type: req.type,
+                quantity: req.quantity,
+                description: req.description,
+                location: req.location,
+                status: req.status,
+                isPickupConfirmed: req.isPickupConfirmed,
+                isConsolidated: req.isConsolidated,
+                rejectionReason: req.rejectionReason,
+                assignedAt: req.assignedAt,
+                acceptedAt: req.acceptedAt,
+                completedAt: req.completedAt,
+                createdAt: req.createdAt
+            }))
         });
     } catch (error) {
         console.error('خطای دریافت درخواست‌ها:', error);
@@ -1007,7 +965,7 @@ app.post('/api/requests', auth, async (req, res) => {
         const { greenhouseId, greenhouseName, greenhousePhone, greenhouseAddress, sortingCenterId, sortingCenterName, type, quantity, description, location } = req.body;
 
         const newRequest = new Request({
-            id: await generateNumericId(Request),
+            id: await getNextSequence('request'),
             greenhouseId,
             greenhouseName,
             greenhousePhone,
@@ -1039,15 +997,13 @@ app.post('/api/requests', auth, async (req, res) => {
 
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
-        const requestId = req.params.id;
+        const requestId = parseInt(req.params.id);
         
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             req.body,
             { new: true }
-        ).populate('greenhouseId', 'fullname phone address')
-         .populate('sortingCenterId', 'fullname phone')
-         .populate('driverId', 'fullname phone licensePlate');
+        );
 
         if (!updatedRequest) {
             return res.status(404).json({
@@ -1072,7 +1028,7 @@ app.put('/api/requests/:id', auth, async (req, res) => {
 
 app.delete('/api/requests/:id', auth, async (req, res) => {
     try {
-        const requestId = req.params.id;
+        const requestId = parseInt(req.params.id);
         const request = await Request.findOne({ id: requestId });
 
         if (!request) {
@@ -1082,7 +1038,7 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        if (request.greenhouseId.toString() !== req.user.id && request.sortingCenterId.toString() !== req.user.id) {
+        if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این درخواست را ندارید'
@@ -1118,7 +1074,7 @@ app.get('/api/sorting/connection-requests', auth, async (req, res) => {
         const pendingConnections = await Connection.find({
             targetId: req.user.id,
             status: 'pending'
-        }).populate('sourceId', 'fullname role phone licensePlate address province');
+        });
 
         res.json({
             success: true,
@@ -1145,7 +1101,7 @@ app.get('/api/sorting/approved-connections', auth, async (req, res) => {
         const approvedConnections = await Connection.find({
             targetId: req.user.id,
             status: 'approved'
-        }).populate('sourceId', 'fullname role phone licensePlate address');
+        });
 
         res.json({
             success: true,
@@ -1172,7 +1128,7 @@ app.get('/api/sorting/transport-requests', auth, async (req, res) => {
         const transportRequests = await Request.find({
             sortingCenterId: req.user.id,
             status: 'pending'
-        }).populate('greenhouseId', 'fullname phone address');
+        });
 
         res.json({
             success: true,
@@ -1202,7 +1158,7 @@ app.get('/api/greenhouse/sorting-centers', auth, async (req, res) => {
         res.json({
             success: true,
             sortingCenters: sortingCenters.map(sc => ({
-                id: sc._id,
+                id: sc.id,
                 fullname: sc.fullname,
                 province: sc.province,
                 phone: sc.phone,
@@ -1231,7 +1187,7 @@ app.get('/api/greenhouse/connections', auth, async (req, res) => {
         const greenhouseConnections = await Connection.find({
             sourceId: req.user.id,
             sourceRole: 'greenhouse'
-        }).populate('targetId', 'fullname role phone');
+        });
 
         res.json({
             success: true,
@@ -1261,7 +1217,7 @@ app.get('/api/driver/sorting-centers', auth, async (req, res) => {
         res.json({
             success: true,
             sortingCenters: sortingCenters.map(sc => ({
-                id: sc._id,
+                id: sc.id,
                 fullname: sc.fullname,
                 province: sc.province,
                 phone: sc.phone,
@@ -1290,7 +1246,7 @@ app.get('/api/driver/connections', auth, async (req, res) => {
         const driverConnections = await Connection.find({
             sourceId: req.user.id,
             sourceRole: 'driver'
-        }).populate('targetId', 'fullname role phone');
+        });
 
         res.json({
             success: true,
@@ -1309,7 +1265,7 @@ app.get('/api/driver/connections', auth, async (req, res) => {
 app.post('/api/requests/consolidate', auth, async (req, res) => {
     try {
         const { missionIds } = req.body;
-        const driver = await User.findById(req.user.id);
+        const driver = await User.findOne({ id: req.user.id });
         
         if (!driver) {
             return res.status(404).json({
@@ -1322,7 +1278,7 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             sourceId: req.user.id, 
             status: 'approved' 
         });
-        const sortingCenter = connection ? await User.findById(connection.targetId) : null;
+        const sortingCenter = connection ? await User.findOne({ id: connection.targetId }) : null;
 
         if (!sortingCenter) {
             return res.status(400).json({
@@ -1332,12 +1288,12 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
         }
 
         const newRequest = new Request({
-            id: await generateNumericId(Request),
+            id: await getNextSequence('request'),
             type: 'delivered_basket',
             status: 'in_progress_to_sorting',
             driverId: req.user.id,
             driverName: driver.fullname,
-            sortingCenterId: sortingCenter._id,
+            sortingCenterId: sortingCenter.id,
             sortingCenterName: sortingCenter.fullname,
             quantity: missionIds.length,
             description: 'تحویل مرکزی بارهای تکمیل شده',
@@ -1347,7 +1303,7 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
         await newRequest.save();
 
         await Request.updateMany(
-            { _id: { $in: missionIds } },
+            { id: { $in: missionIds } },
             { $set: { isConsolidated: true } }
         );
 
@@ -1368,7 +1324,7 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
 // رد تحویل تجمیعی
 app.post('/api/requests/:id/reject', auth, async (req, res) => {
     try {
-        const requestId = req.params.id;
+        const requestId = parseInt(req.params.id);
         const { reason } = req.body;
 
         const updatedRequest = await Request.findOneAndUpdate(
@@ -1438,26 +1394,22 @@ app.get('/api/debug/system', auth, async (req, res) => {
     try {
         console.log('🔧 درخواست دیباگ سیستم از کاربر:', req.user.id);
 
-        const currentUser = await User.findById(req.user.id);
+        const currentUser = await User.findOne({ id: req.user.id });
         const allUsers = await User.find({}, 'fullname role phone');
-        const allConnections = await Connection.find()
-            .populate('sourceId', 'fullname role')
-            .populate('targetId', 'fullname role');
+        const allConnections = await Connection.find();
 
         const userConnections = await Connection.find({
             $or: [
                 { sourceId: req.user.id },
                 { targetId: req.user.id }
             ]
-        })
-        .populate('sourceId', 'fullname role phone')
-        .populate('targetId', 'fullname role phone');
+        });
 
         res.json({
             success: true,
             debug: {
                 currentUser: {
-                    id: currentUser?._id,
+                    id: currentUser?.id,
                     fullname: currentUser?.fullname,
                     role: currentUser?.role,
                     phone: currentUser?.phone
@@ -1483,6 +1435,41 @@ app.get('/api/debug/system', auth, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'خطای دیباگ: ' + error.message
+        });
+    }
+});
+
+// === آپدیت ID کاربران موجود ===
+app.post('/api/debug/update-user-ids', async (req, res) => {
+    try {
+        const users = await User.find({ id: { $exists: false } });
+        let counter = 1;
+
+        // پیدا کردن بیشترین id موجود
+        const lastUser = await User.findOne().sort({ id: -1 });
+        if (lastUser && lastUser.id) {
+            counter = lastUser.id + 1;
+        }
+
+        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
+
+        for (const user of users) {
+            user.id = counter;
+            await user.save();
+            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
+            counter++;
+        }
+
+        res.json({
+            success: true,
+            message: `${users.length} کاربر بروزرسانی شدند`,
+            updatedCount: users.length
+        });
+    } catch (error) {
+        console.error('❌ خطا در بروزرسانی:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
         });
     }
 });

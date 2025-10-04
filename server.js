@@ -742,14 +742,37 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        const { targetId } = req.body;
+        console.log('📡 درخواست POST /api/connections - داده دریافتی:', JSON.stringify(req.body, null, 2));
 
-        if (!targetId) {
+        let { targetId } = req.body;
+
+        // اگر targetId یک آبجکت است، مقدار صحیح را استخراج کن
+        if (targetId && typeof targetId === 'object') {
+            console.log('🔧 targetId یک آبجکت است، استخراج مقدار...');
+            if (targetId.targetId) {
+                targetId = targetId.targetId;
+            } else if (targetId.id) {
+                targetId = targetId.id;
+            } else {
+                // اگر نتوانستیم مقدار را استخراج کنیم، از اولین کلید عددی استفاده کنیم
+                const keys = Object.keys(targetId).filter(key => !isNaN(parseInt(key)));
+                if (keys.length > 0) {
+                    targetId = parseInt(keys[0]);
+                }
+            }
+        }
+
+        // اطمینان از اینکه targetId یک عدد است
+        targetId = parseInt(targetId);
+
+        if (!targetId || isNaN(targetId)) {
             return res.status(400).json({
                 success: false,
-                message: 'شناسه مقصد الزامی است'
+                message: 'شناسه مقصد معتبر نیست'
             });
         }
+
+        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
         const sourceUser = await User.findOne({ id: req.user.id });
         if (!sourceUser) {
@@ -759,6 +782,8 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
+        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role, '- ID:', sourceUser.id);
+
         const targetUser = await User.findOne({ id: targetId });
         if (!targetUser) {
             return res.status(404).json({
@@ -767,6 +792,8 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
+        console.log('✅ کاربر مقصد:', targetUser.fullname, '- نقش:', targetUser.role, '- ID:', targetUser.id);
+
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
@@ -774,6 +801,7 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
         if (existingConnection) {
+            console.log('⚠️ اتصال تکراری وجود دارد');
             return res.status(400).json({
                 success: false,
                 message: 'قبلاً به این کاربر متصل شده‌اید'
@@ -781,8 +809,11 @@ app.post('/api/connections', auth, async (req, res) => {
         }
 
         // ایجاد اتصال جدید
+        const connectionId = await getNextSequence('connection');
+        console.log('🆔 ایجاد اتصال جدید با ID:', connectionId);
+
         const connectionData = {
-            id: await getNextSequence('connection'),
+            id: connectionId,
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
@@ -798,8 +829,12 @@ app.post('/api/connections', auth, async (req, res) => {
             connectionData.sourceAddress = sourceUser.address;
         }
 
+        console.log('📝 داده‌های اتصال:', connectionData);
+
         const newConnection = new Connection(connectionData);
         await newConnection.save();
+
+        console.log('✅ اتصال با موفقیت ایجاد شد:', newConnection.id);
 
         res.status(201).json({
             success: true,
@@ -808,10 +843,10 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('خطای ایجاد اتصال:', error);
+        console.error('💥 خطا در ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در ایجاد اتصال'
+            message: 'خطای سرور در ایجاد اتصال: ' + error.message
         });
     }
 });
@@ -1276,19 +1311,12 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             sourceId: req.user.id, 
             status: 'approved' 
         });
-        
-        if (!connection) {
+        const sortingCenter = connection ? await User.findOne({ id: connection.targetId }) : null;
+
+        if (!sortingCenter) {
             return res.status(400).json({
                 success: false,
                 message: 'هیچ مرکز سورتینگ متصلی وجود ندارد'
-            });
-        }
-
-        const sortingCenter = await User.findOne({ id: connection.targetId });
-        if (!sortingCenter) {
-            return res.status(404).json({
-                success: false,
-                message: 'مرکز سورتینگ یافت نشد'
             });
         }
 
@@ -1332,24 +1360,6 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
         const requestId = parseInt(req.params.id);
         const { reason } = req.body;
 
-        const request = await Request.findOne({ id: requestId });
-        if (!request) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
-        }
-
-        // بررسی مجوز: فقط مرکز سورتینگ مرتبط می‌تواند رد کند
-        const canReject = request.sortingCenterId === req.user.id;
-        
-        if (!canReject) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز رد این تحویل را ندارید'
-            });
-        }
-
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             {
@@ -1359,6 +1369,13 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
             },
             { new: true }
         );
+
+        if (!updatedRequest) {
+            return res.status(404).json({
+                success: false,
+                message: 'درخواست یافت نشد'
+            });
+        }
 
         res.json({
             success: true,
@@ -1408,6 +1425,8 @@ app.post('/api/users/reset-password', async (req, res) => {
 // === مسیرهای دیباگ ===
 app.get('/api/debug/system', auth, async (req, res) => {
     try {
+        console.log('🔧 درخواست دیباگ سیستم از کاربر:', req.user.id);
+
         const currentUser = await User.findOne({ id: req.user.id });
         const allUsers = await User.find({}, 'fullname role phone');
         const allConnections = await Connection.find();
