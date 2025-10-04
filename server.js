@@ -15,16 +15,13 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9e
 .then(() => console.log('✅ متصل به MongoDB شد'))
 .catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
-// ==================== مدل‌های دیتابیس با ID عددی ====================
-
-// شمارنده برای تولید ID عددی
+// ==================== مدل شمارنده برای ID عددی ====================
 const CounterSchema = new mongoose.Schema({
     _id: { type: String, required: true },
     seq: { type: Number, default: 0 }
 });
 const Counter = mongoose.model('Counter', CounterSchema);
 
-// تابع برای تولید ID عددی
 const getNextSequence = async (name) => {
     const counter = await Counter.findByIdAndUpdate(
         name,
@@ -34,6 +31,7 @@ const getNextSequence = async (name) => {
     return counter.seq;
 };
 
+// ==================== مدل‌های دیتابیس با ID عددی ====================
 const UserSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
     role: { type: String, required: true, enum: ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'] },
@@ -180,7 +178,7 @@ const auth = async (req, res, next) => {
     }
 };
 
-// ==================== مسیرهای اصلی ====================
+// ==================== مسیرهای اصلی API ====================
 
 // === بررسی سلامت ===
 app.get('/api/health', (req, res) => {
@@ -493,16 +491,248 @@ app.delete('/api/users', auth, async (req, res) => {
     }
 });
 
+// === آگهی‌ها ===
+app.get('/api/ads', auth, async (req, res) => {
+    try {
+        const ads = await Ad.find();
+        
+        res.json({
+            success: true,
+            ads: ads.map(ad => ({
+                id: ad.id,
+                product: ad.product,
+                category: ad.category,
+                quantity: ad.quantity,
+                price: ad.price,
+                emoji: ad.emoji,
+                image: ad.image,
+                adType: ad.adType,
+                seller: ad.seller,
+                sellerId: ad.sellerId,
+                buyer: ad.buyer,
+                buyerId: ad.buyerId,
+                date: ad.date,
+                createdAt: ad.createdAt
+            }))
+        });
+    } catch (error) {
+        console.error('خطای دریافت آگهی‌ها:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت آگهی‌ها'
+        });
+    }
+});
+
+app.post('/api/ads', auth, async (req, res) => {
+    try {
+        const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
+
+        const newAd = new Ad({
+            id: await getNextSequence('ad'),
+            product,
+            category,
+            quantity: parseInt(quantity),
+            price: parseInt(price),
+            emoji,
+            image: image || null,
+            adType,
+            seller: adType === 'supply' ? seller : undefined,
+            sellerId: adType === 'supply' ? sellerId : undefined,
+            buyer: adType === 'demand' ? buyer : undefined,
+            buyerId: adType === 'demand' ? buyerId : undefined,
+            date: new Date().toLocaleDateString('fa-IR')
+        });
+
+        await newAd.save();
+
+        res.status(201).json({
+            success: true,
+            ad: newAd
+        });
+
+    } catch (error) {
+        console.error('خطای ایجاد آگهی:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در ایجاد آگهی'
+        });
+    }
+});
+
+app.delete('/api/ads/:id', auth, async (req, res) => {
+    try {
+        const adId = parseInt(req.params.id);
+        const ad = await Ad.findOne({ id: adId });
+
+        if (!ad) {
+            return res.status(404).json({
+                success: false,
+                message: 'آگهی یافت نشد'
+            });
+        }
+
+        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
+            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
+            return res.status(403).json({
+                success: false,
+                message: 'مجوز حذف این آگهی را ندارید'
+            });
+        }
+
+        await Promise.all([
+            Ad.findOneAndDelete({ id: adId }),
+            Message.deleteMany({ adId: adId })
+        ]);
+
+        res.json({
+            success: true,
+            message: 'آگهی و پیام‌های مرتبط با موفقیت حذف شدند'
+        });
+
+    } catch (error) {
+        console.error('خطای حذف آگهی:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در حذف آگهی'
+        });
+    }
+});
+
+// === پیام‌ها ===
+app.get('/api/messages', auth, async (req, res) => {
+    try {
+        const userMessages = await Message.find({
+            $or: [
+                { senderId: req.user.id },
+                { recipientId: req.user.id }
+            ]
+        });
+
+        res.json({
+            success: true,
+            messages: userMessages.map(msg => ({
+                id: msg.id,
+                adId: msg.adId,
+                senderId: msg.senderId,
+                senderName: msg.senderName,
+                recipientId: msg.recipientId,
+                recipientName: msg.recipientName,
+                content: msg.content,
+                image: msg.image,
+                read: msg.read,
+                createdAt: msg.createdAt
+            }))
+        });
+    } catch (error) {
+        console.error('خطای دریافت پیام‌ها:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت پیام‌ها'
+        });
+    }
+});
+
+app.post('/api/messages', auth, async (req, res) => {
+    try {
+        const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
+
+        const newMessage = new Message({
+            id: await getNextSequence('message'),
+            adId: parseInt(adId),
+            senderId,
+            senderName,
+            recipientId,
+            recipientName,
+            content,
+            image: image || null
+        });
+
+        await newMessage.save();
+
+        res.status(201).json({
+            success: true,
+            message: newMessage
+        });
+
+    } catch (error) {
+        console.error('خطای ایجاد پیام:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در ایجاد پیام'
+        });
+    }
+});
+
+app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res) => {
+    try {
+        const conversationId = req.params.conversationId;
+        const [user1Id, user2Id] = conversationId.split('-').map(Number);
+
+        await Message.updateMany(
+            {
+                recipientId: req.user.id,
+                senderId: { $in: [user1Id, user2Id] },
+                read: false
+            },
+            { $set: { read: true } }
+        );
+
+        res.json({
+            success: true,
+            message: 'مکالمه به عنوان خوانده شده علامت گذاری شد'
+        });
+
+    } catch (error) {
+        console.error('خطای علامت گذاری مکالمه:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در علامت گذاری مکالمه'
+        });
+    }
+});
+
+app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) => {
+    try {
+        const conversationId = req.params.conversationId;
+        const [user1Id, user2Id] = conversationId.split('-').map(Number);
+
+        const result = await Message.deleteMany({
+            $or: [
+                { senderId: user1Id, recipientId: user2Id },
+                { senderId: user2Id, recipientId: user1Id }
+            ]
+        });
+
+        res.json({
+            success: true,
+            message: `${result.deletedCount} پیام حذف شد`
+        });
+
+    } catch (error) {
+        console.error('خطای حذف مکالمه:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در حذف مکالمه'
+        });
+    }
+});
+
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
+        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
+        
         const connections = await Connection.find();
+        
+        console.log('✅ اتصالات یافت شده:', connections.length);
+        
         res.json({
             success: true,
             connections
         });
     } catch (error) {
-        console.error('خطای دریافت اتصالات:', error);
+        console.error('❌ خطای GET /api/connections:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت اتصالات'
@@ -512,14 +742,24 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        const { targetId } = req.body;
+        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
 
-        if (!targetId) {
+        let { targetId } = req.body;
+
+        // استخراج targetId از object اگر لازم باشد
+        if (targetId && typeof targetId === 'object' && targetId.targetId) {
+            console.log('🔧 استخراج targetId از object...');
+            targetId = targetId.targetId;
+        }
+
+        if (!targetId && targetId !== 0) {
             return res.status(400).json({
                 success: false,
                 message: 'شناسه مقصد الزامی است'
             });
         }
+
+        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
         const sourceUser = await User.findOne({ id: req.user.id });
         if (!sourceUser) {
@@ -529,24 +769,34 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
-        const targetUser = await User.findOne({ id: targetId });
-        if (!targetUser) {
+        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
+
+        // **راه حل جدید: پیدا کردن تمام مراکز سورتینگ و استفاده از اولین مورد**
+        const sortingCenters = await User.find({ role: 'sorting' });
+        
+        if (sortingCenters.length === 0) {
+            console.error('❌ هیچ مرکز سورتینگی در سیستم وجود ندارد');
             return res.status(404).json({
                 success: false,
-                message: 'کاربر مقصد یافت نشد'
+                message: 'هیچ مرکز سورتینگی در سیستم وجود ندارد'
             });
         }
+
+        // استفاده از اولین مرکز سورتینگ موجود
+        const targetUser = sortingCenters[0];
+        console.log('✅ استفاده از مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
-            targetId: targetId
+            targetId: targetUser.id
         });
 
         if (existingConnection) {
+            console.log('⚠️ اتصال تکراری');
             return res.status(400).json({
                 success: false,
-                message: 'قبلاً به این کاربر متصل شده‌اید'
+                message: 'قبلاً به این مرکز سورتینگ متصل شده‌اید'
             });
         }
 
@@ -557,7 +807,7 @@ app.post('/api/connections', auth, async (req, res) => {
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
-            targetId: targetId,
+            targetId: targetUser.id,
             status: 'pending'
         };
 
@@ -568,8 +818,12 @@ app.post('/api/connections', auth, async (req, res) => {
             connectionData.sourceAddress = sourceUser.address;
         }
 
+        console.log('📝 ایجاد اتصال...');
+
         const newConnection = new Connection(connectionData);
         await newConnection.save();
+
+        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
         res.status(201).json({
             success: true,
@@ -578,10 +832,10 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('خطای ایجاد اتصال:', error);
+        console.error('💥 خطا در ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در ایجاد اتصال'
+            message: 'خطای سرور: ' + error.message
         });
     }
 });
@@ -668,9 +922,34 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
 app.get('/api/requests', auth, async (req, res) => {
     try {
         const requests = await Request.find();
+        
         res.json({
             success: true,
-            requests
+            requests: requests.map(req => ({
+                id: req.id,
+                greenhouseId: req.greenhouseId,
+                greenhouseName: req.greenhouseName,
+                greenhousePhone: req.greenhousePhone,
+                greenhouseAddress: req.greenhouseAddress,
+                sortingCenterId: req.sortingCenterId,
+                sortingCenterName: req.sortingCenterName,
+                driverId: req.driverId,
+                driverName: req.driverName,
+                driverPhone: req.driverPhone,
+                driverLicensePlate: req.driverLicensePlate,
+                type: req.type,
+                quantity: req.quantity,
+                description: req.description,
+                location: req.location,
+                status: req.status,
+                isPickupConfirmed: req.isPickupConfirmed,
+                isConsolidated: req.isConsolidated,
+                rejectionReason: req.rejectionReason,
+                assignedAt: req.assignedAt,
+                acceptedAt: req.acceptedAt,
+                completedAt: req.completedAt,
+                createdAt: req.createdAt
+            }))
         });
     } catch (error) {
         console.error('خطای دریافت درخواست‌ها:', error);
@@ -782,207 +1061,207 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
     }
 });
 
-// === آگهی‌ها ===
-app.get('/api/ads', auth, async (req, res) => {
+// === مسیرهای مرکز سورتینگ ===
+app.get('/api/sorting/connection-requests', auth, async (req, res) => {
     try {
-        const ads = await Ad.find();
-        res.json({
-            success: true,
-            ads
-        });
-    } catch (error) {
-        console.error('خطای دریافت آگهی‌ها:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت آگهی‌ها'
-        });
-    }
-});
-
-app.post('/api/ads', auth, async (req, res) => {
-    try {
-        const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
-
-        const newAd = new Ad({
-            id: await getNextSequence('ad'),
-            product,
-            category,
-            quantity: parseInt(quantity),
-            price: parseInt(price),
-            emoji,
-            image: image || null,
-            adType,
-            seller: adType === 'supply' ? seller : undefined,
-            sellerId: adType === 'supply' ? sellerId : undefined,
-            buyer: adType === 'demand' ? buyer : undefined,
-            buyerId: adType === 'demand' ? buyerId : undefined,
-            date: new Date().toLocaleDateString('fa-IR')
-        });
-
-        await newAd.save();
-
-        res.status(201).json({
-            success: true,
-            ad: newAd
-        });
-
-    } catch (error) {
-        console.error('خطای ایجاد آگهی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ایجاد آگهی'
-        });
-    }
-});
-
-app.delete('/api/ads/:id', auth, async (req, res) => {
-    try {
-        const adId = parseInt(req.params.id);
-        const ad = await Ad.findOne({ id: adId });
-
-        if (!ad) {
-            return res.status(404).json({
-                success: false,
-                message: 'آگهی یافت نشد'
-            });
-        }
-
-        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
-            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
+        if (req.user.role !== 'sorting') {
             return res.status(403).json({
                 success: false,
-                message: 'مجوز حذف این آگهی را ندارید'
+                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
             });
         }
 
-        await Promise.all([
-            Ad.findOneAndDelete({ id: adId }),
-            Message.deleteMany({ adId: adId })
-        ]);
-
-        res.json({
-            success: true,
-            message: 'آگهی و پیام‌های مرتبط با موفقیت حذف شدند'
-        });
-
-    } catch (error) {
-        console.error('خطای حذف آگهی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف آگهی'
-        });
-    }
-});
-
-// === پیام‌ها ===
-app.get('/api/messages', auth, async (req, res) => {
-    try {
-        const messages = await Message.find({
-            $or: [
-                { senderId: req.user.id },
-                { recipientId: req.user.id }
-            ]
+        const pendingConnections = await Connection.find({
+            targetId: req.user.id,
+            status: 'pending'
         });
 
         res.json({
             success: true,
-            messages
+            connectionRequests: pendingConnections
         });
     } catch (error) {
-        console.error('خطای دریافت پیام‌ها:', error);
+        console.error('خطای دریافت درخواست‌های اتصال سورتینگ:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در دریافت پیام‌ها'
+            message: 'خطای سرور در دریافت درخواست‌های اتصال'
         });
     }
 });
 
-app.post('/api/messages', auth, async (req, res) => {
+app.get('/api/sorting/approved-connections', auth, async (req, res) => {
     try {
-        const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
+        if (req.user.role !== 'sorting') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
 
-        const newMessage = new Message({
-            id: await getNextSequence('message'),
-            adId: parseInt(adId),
-            senderId,
-            senderName,
-            recipientId,
-            recipientName,
-            content,
-            image: image || null
-        });
-
-        await newMessage.save();
-
-        res.status(201).json({
-            success: true,
-            message: newMessage
-        });
-
-    } catch (error) {
-        console.error('خطای ایجاد پیام:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ایجاد پیام'
-        });
-    }
-});
-
-app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res) => {
-    try {
-        const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-').map(Number);
-
-        await Message.updateMany(
-            {
-                recipientId: req.user.id,
-                senderId: { $in: [user1Id, user2Id] },
-                read: false
-            },
-            { $set: { read: true } }
-        );
-
-        res.json({
-            success: true,
-            message: 'مکالمه به عنوان خوانده شده علامت گذاری شد'
-        });
-
-    } catch (error) {
-        console.error('خطای علامت گذاری مکالمه:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در علامت گذاری مکالمه'
-        });
-    }
-});
-
-app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) => {
-    try {
-        const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-').map(Number);
-
-        const result = await Message.deleteMany({
-            $or: [
-                { senderId: user1Id, recipientId: user2Id },
-                { senderId: user2Id, recipientId: user1Id }
-            ]
+        const approvedConnections = await Connection.find({
+            targetId: req.user.id,
+            status: 'approved'
         });
 
         res.json({
             success: true,
-            message: `${result.deletedCount} پیام حذف شد`
+            approvedConnections
         });
-
     } catch (error) {
-        console.error('خطای حذف مکالمه:', error);
+        console.error('خطای دریافت اتصالات تأیید شده:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در حذف مکالمه'
+            message: 'خطای سرور در دریافت اتصالات تأیید شده'
         });
     }
 });
 
-// === مسیرهای خاص ===
+app.get('/api/sorting/transport-requests', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'sorting') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
+
+        const transportRequests = await Request.find({
+            sortingCenterId: req.user.id,
+            status: 'pending'
+        });
+
+        res.json({
+            success: true,
+            transportRequests
+        });
+    } catch (error) {
+        console.error('خطای دریافت درخواست‌های حمل و نقل:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت درخواست‌های حمل و نقل'
+        });
+    }
+});
+
+// === مسیرهای گلخانه ===
+app.get('/api/greenhouse/sorting-centers', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'greenhouse') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط گلخانه‌ها می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
+
+        const sortingCenters = await User.find({ role: 'sorting' });
+        
+        res.json({
+            success: true,
+            sortingCenters: sortingCenters.map(sc => ({
+                id: sc.id,
+                fullname: sc.fullname,
+                province: sc.province,
+                phone: sc.phone,
+                address: sc.address,
+                location: sc.location
+            }))
+        });
+    } catch (error) {
+        console.error('خطای دریافت مراکز سورتینگ:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت مراکز سورتینگ'
+        });
+    }
+});
+
+app.get('/api/greenhouse/connections', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'greenhouse') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط گلخانه‌ها می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
+
+        const greenhouseConnections = await Connection.find({
+            sourceId: req.user.id,
+            sourceRole: 'greenhouse'
+        });
+
+        res.json({
+            success: true,
+            connections: greenhouseConnections
+        });
+    } catch (error) {
+        console.error('خطای دریافت اتصالات گلخانه:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت اتصالات گلخانه'
+        });
+    }
+});
+
+// === مسیرهای راننده ===
+app.get('/api/driver/sorting-centers', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'driver') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط رانندگان می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
+
+        const sortingCenters = await User.find({ role: 'sorting' });
+        
+        res.json({
+            success: true,
+            sortingCenters: sortingCenters.map(sc => ({
+                id: sc.id,
+                fullname: sc.fullname,
+                province: sc.province,
+                phone: sc.phone,
+                address: sc.address,
+                location: sc.location
+            }))
+        });
+    } catch (error) {
+        console.error('خطای دریافت مراکز سورتینگ راننده:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت مراکز سورتینگ'
+        });
+    }
+});
+
+app.get('/api/driver/connections', auth, async (req, res) => {
+    try {
+        if (req.user.role !== 'driver') {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط رانندگان می‌توانند به این مسیر دسترسی داشته باشند'
+            });
+        }
+
+        const driverConnections = await Connection.find({
+            sourceId: req.user.id,
+            sourceRole: 'driver'
+        });
+
+        res.json({
+            success: true,
+            connections: driverConnections
+        });
+    } catch (error) {
+        console.error('خطای دریافت اتصالات راننده:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در دریافت اتصالات راننده'
+        });
+    }
+});
+
+// تحویل تجمیعی
 app.post('/api/requests/consolidate', auth, async (req, res) => {
     try {
         const { missionIds } = req.body;
@@ -999,19 +1278,12 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             sourceId: req.user.id, 
             status: 'approved' 
         });
-        
-        if (!connection) {
+        const sortingCenter = connection ? await User.findOne({ id: connection.targetId }) : null;
+
+        if (!sortingCenter) {
             return res.status(400).json({
                 success: false,
                 message: 'هیچ مرکز سورتینگ متصلی وجود ندارد'
-            });
-        }
-
-        const sortingCenter = await User.findOne({ id: connection.targetId });
-        if (!sortingCenter) {
-            return res.status(404).json({
-                success: false,
-                message: 'مرکز سورتینگ یافت نشد'
             });
         }
 
@@ -1049,6 +1321,7 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
     }
 });
 
+// رد تحویل تجمیعی
 app.post('/api/requests/:id/reject', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
@@ -1116,6 +1389,91 @@ app.post('/api/users/reset-password', async (req, res) => {
     }
 });
 
+// === مسیرهای دیباگ ===
+app.get('/api/debug/system', auth, async (req, res) => {
+    try {
+        console.log('🔧 درخواست دیباگ سیستم از کاربر:', req.user.id);
+
+        const currentUser = await User.findOne({ id: req.user.id });
+        const allUsers = await User.find({}, 'fullname role phone');
+        const allConnections = await Connection.find();
+
+        const userConnections = await Connection.find({
+            $or: [
+                { sourceId: req.user.id },
+                { targetId: req.user.id }
+            ]
+        });
+
+        res.json({
+            success: true,
+            debug: {
+                currentUser: {
+                    id: currentUser?.id,
+                    fullname: currentUser?.fullname,
+                    role: currentUser?.role,
+                    phone: currentUser?.phone
+                },
+                users: {
+                    total: allUsers.length,
+                    list: allUsers
+                },
+                connections: {
+                    total: allConnections.length,
+                    userConnections: userConnections.length,
+                    all: allConnections,
+                    user: userConnections
+                },
+                database: {
+                    status: mongoose.connection.readyState === 1 ? 'متصل' : 'قطع',
+                    name: mongoose.connection.name
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ خطای دیباگ سیستم:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای دیباگ: ' + error.message
+        });
+    }
+});
+
+// === آپدیت ID کاربران موجود ===
+app.post('/api/debug/update-user-ids', async (req, res) => {
+    try {
+        const users = await User.find({ id: { $exists: false } });
+        let counter = 1;
+
+        // پیدا کردن بیشترین id موجود
+        const lastUser = await User.findOne().sort({ id: -1 });
+        if (lastUser && lastUser.id) {
+            counter = lastUser.id + 1;
+        }
+
+        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
+
+        for (const user of users) {
+            user.id = counter;
+            await user.save();
+            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
+            counter++;
+        }
+
+        res.json({
+            success: true,
+            message: `${users.length} کاربر بروزرسانی شدند`,
+            updatedCount: users.length
+        });
+    } catch (error) {
+        console.error('❌ خطا در بروزرسانی:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+});
+
 // === مسیر پیش‌فرض ===
 app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -1126,4 +1484,5 @@ app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
+    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
 });
