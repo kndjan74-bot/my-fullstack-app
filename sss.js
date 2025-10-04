@@ -21,6 +21,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key-change-in-production';
 
@@ -69,6 +70,7 @@ app.post('/api/users/register', async (req, res) => {
     try {
         const { role, fullname, province, phone, password, address, licensePlate } = req.body;
 
+        // Check if user already exists
         const existingUser = users.find(user => user.phone === phone);
         if (existingUser) {
             return res.status(400).json({
@@ -77,9 +79,11 @@ app.post('/api/users/register', async (req, res) => {
             });
         }
 
+        // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
+        // Create user
         const newUser = {
             id: users.length + 1,
             role,
@@ -97,6 +101,7 @@ app.post('/api/users/register', async (req, res) => {
 
         users.push(newUser);
 
+        // Create JWT token
         const token = jwt.sign(
             { id: newUser.id, phone: newUser.phone, role: newUser.role },
             JWT_SECRET,
@@ -133,6 +138,7 @@ app.post('/api/users/login', async (req, res) => {
     try {
         const { phone, password } = req.body;
 
+        // Find user
         const user = users.find(u => u.phone === phone);
         if (!user) {
             return res.status(400).json({
@@ -141,6 +147,7 @@ app.post('/api/users/login', async (req, res) => {
             });
         }
 
+        // Check password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({
@@ -149,6 +156,7 @@ app.post('/api/users/login', async (req, res) => {
             });
         }
 
+        // Create JWT token
         const token = jwt.sign(
             { id: user.id, phone: user.phone, role: user.role },
             JWT_SECRET,
@@ -209,13 +217,9 @@ app.get('/api/users/auth', auth, (req, res) => {
 
 // === USER ROUTES ===
 app.get('/api/users', auth, (req, res) => {
-    // فقط کاربرانی رو برگردون که نقش معتبر دارن
-    const validRoles = ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'];
-    const filteredUsers = users.filter(u => validRoles.includes(u.role));
-    
     res.json({
         success: true,
-        users: filteredUsers.map(u => ({
+        users: users.map(u => ({
             id: u.id,
             role: u.role,
             fullname: u.fullname,
@@ -242,6 +246,7 @@ app.put('/api/users', auth, async (req, res) => {
             });
         }
 
+        // Update user fields
         if (location) users[userIndex].location = location;
         if (emptyBaskets !== undefined) users[userIndex].emptyBaskets = emptyBaskets;
         if (loadCapacity !== undefined) users[userIndex].loadCapacity = loadCapacity;
@@ -249,7 +254,18 @@ app.put('/api/users', auth, async (req, res) => {
 
         res.json({
             success: true,
-            user: users[userIndex]
+            user: {
+                id: users[userIndex].id,
+                role: users[userIndex].role,
+                fullname: users[userIndex].fullname,
+                province: users[userIndex].province,
+                phone: users[userIndex].phone,
+                address: users[userIndex].address,
+                licensePlate: users[userIndex].licensePlate,
+                location: users[userIndex].location,
+                emptyBaskets: users[userIndex].emptyBaskets,
+                loadCapacity: users[userIndex].loadCapacity
+            }
         });
 
     } catch (error) {
@@ -273,6 +289,7 @@ app.put('/api/users/password', auth, async (req, res) => {
             });
         }
 
+        // Verify current password
         const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch) {
             return res.status(400).json({
@@ -281,6 +298,7 @@ app.put('/api/users/password', auth, async (req, res) => {
             });
         }
 
+        // Hash new password
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
 
@@ -308,7 +326,10 @@ app.delete('/api/users', auth, (req, res) => {
         });
     }
 
+    // Remove user
     users.splice(userIndex, 1);
+    
+    // Remove user's data
     requests = requests.filter(r => r.greenhouseId !== req.user.id && r.driverId !== req.user.id && r.sortingCenterId !== req.user.id);
     connections = connections.filter(c => c.sourceId !== req.user.id && c.targetId !== req.user.id);
     messages = messages.filter(m => m.senderId !== req.user.id && m.recipientId !== req.user.id);
@@ -378,6 +399,7 @@ app.delete('/api/ads/:id', auth, (req, res) => {
 
     const ad = ads[adIndex];
     
+    // Check ownership
     if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
         (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
         return res.status(403).json({
@@ -386,7 +408,10 @@ app.delete('/api/ads/:id', auth, (req, res) => {
         });
     }
 
+    // Remove ad
     ads.splice(adIndex, 1);
+    
+    // Remove related messages
     messages = messages.filter(msg => msg.adId !== adId);
 
     res.json({
@@ -451,6 +476,7 @@ app.put('/api/messages/conversation/:conversationId/read', auth, (req, res) => {
         });
     }
 
+    // Mark messages as read
     messages.forEach(msg => {
         if (msg.recipientId === req.user.id && 
             (msg.senderId === user1Id || msg.senderId === user2Id)) {
@@ -475,6 +501,7 @@ app.delete('/api/messages/conversation/:conversationId', auth, (req, res) => {
         });
     }
 
+    // Remove messages from conversation
     const initialLength = messages.length;
     messages = messages.filter(msg => 
         !((msg.senderId === user1Id && msg.recipientId === user2Id) ||
@@ -507,18 +534,6 @@ app.post('/api/connections', auth, (req, res) => {
             });
         }
 
-        // بررسی وجود اتصال تکراری
-        const existingConnection = connections.find(c => 
-            c.sourceId === req.user.id && c.targetId === parseInt(targetId)
-        );
-
-        if (existingConnection) {
-            return res.status(400).json({
-                success: false,
-                message: 'Connection request already sent'
-            });
-        }
-
         const newConnection = {
             id: connections.length + 1,
             sourceId: req.user.id,
@@ -530,7 +545,7 @@ app.post('/api/connections', auth, (req, res) => {
             createdAt: new Date().toISOString()
         };
 
-        // اضافه کردن فیلدهای اضافی بر اساس نقش
+        // Add additional fields based on role
         if (sourceUser.role === 'driver') {
             newConnection.sourceLicensePlate = sourceUser.licensePlate;
         } else if (sourceUser.role === 'greenhouse') {
@@ -565,7 +580,7 @@ app.put('/api/connections/:id', auth, (req, res) => {
         });
     }
 
-    // بررسی مجوز - فقط سورتینگ می‌تونه درخواست‌های اتصال رو تایید/رد کنه
+    // Check authorization
     if (connection.targetId !== req.user.id) {
         return res.status(403).json({
             success: false,
@@ -595,7 +610,7 @@ app.delete('/api/connections/:id', auth, (req, res) => {
 
     const connection = connections[connectionIndex];
     
-    // بررسی مجوز - فقط صاحب درخواست یا هدف می‌تونن حذف کنن
+    // Check authorization
     if (connection.sourceId !== req.user.id && connection.targetId !== req.user.id) {
         return res.status(403).json({
             success: false,
@@ -666,6 +681,7 @@ app.put('/api/requests/:id', auth, (req, res) => {
         });
     }
 
+    // Update request fields
     Object.keys(req.body).forEach(key => {
         if (req.body[key] !== undefined) {
             request[key] = req.body[key];
@@ -691,6 +707,7 @@ app.delete('/api/requests/:id', auth, (req, res) => {
 
     const request = requests[requestIndex];
     
+    // Check authorization
     if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
         return res.status(403).json({
             success: false,
@@ -703,155 +720,6 @@ app.delete('/api/requests/:id', auth, (req, res) => {
     res.json({
         success: true,
         message: 'Request deleted successfully'
-    });
-});
-
-// === ROUTES FOR SORTING CENTER ===
-
-// دریافت درخواست‌های اتصال برای سورتینگ
-app.get('/api/sorting/connection-requests', auth, (req, res) => {
-    if (req.user.role !== 'sorting') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only sorting centers can access this endpoint'
-        });
-    }
-
-    const pendingConnections = connections.filter(c => 
-        c.targetId === req.user.id && c.status === 'pending'
-    );
-
-    res.json({
-        success: true,
-        connectionRequests: pendingConnections
-    });
-});
-
-// دریافت اتصالات تایید شده برای سورتینگ
-app.get('/api/sorting/approved-connections', auth, (req, res) => {
-    if (req.user.role !== 'sorting') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only sorting centers can access this endpoint'
-        });
-    }
-
-    const approvedConnections = connections.filter(c => 
-        c.targetId === req.user.id && c.status === 'approved'
-    );
-
-    res.json({
-        success: true,
-        approvedConnections: approvedConnections
-    });
-});
-
-// دریافت درخواست‌های حمل و نقل برای سورتینگ
-app.get('/api/sorting/transport-requests', auth, (req, res) => {
-    if (req.user.role !== 'sorting') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only sorting centers can access this endpoint'
-        });
-    }
-
-    const transportRequests = requests.filter(r => 
-        r.sortingCenterId === req.user.id && r.status === 'pending'
-    );
-
-    res.json({
-        success: true,
-        transportRequests: transportRequests
-    });
-});
-
-// === ROUTES FOR GREENHOUSE ===
-
-// دریافت مراکز سورتینگ برای گلخانه
-app.get('/api/greenhouse/sorting-centers', auth, (req, res) => {
-    if (req.user.role !== 'greenhouse') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only greenhouses can access this endpoint'
-        });
-    }
-
-    const sortingCenters = users.filter(u => u.role === 'sorting');
-    
-    res.json({
-        success: true,
-        sortingCenters: sortingCenters.map(sc => ({
-            id: sc.id,
-            fullname: sc.fullname,
-            province: sc.province,
-            phone: sc.phone,
-            address: sc.address,
-            location: sc.location
-        }))
-    });
-});
-
-// دریافت اتصالات گلخانه
-app.get('/api/greenhouse/connections', auth, (req, res) => {
-    if (req.user.role !== 'greenhouse') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only greenhouses can access this endpoint'
-        });
-    }
-
-    const greenhouseConnections = connections.filter(c => 
-        c.sourceId === req.user.id && c.sourceRole === 'greenhouse'
-    );
-
-    res.json({
-        success: true,
-        connections: greenhouseConnections
-    });
-});
-
-// === ROUTES FOR DRIVER ===
-
-// دریافت مراکز سورتینگ برای راننده
-app.get('/api/driver/sorting-centers', auth, (req, res) => {
-    if (req.user.role !== 'driver') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only drivers can access this endpoint'
-        });
-    }
-
-    const sortingCenters = users.filter(u => u.role === 'sorting');
-    
-    res.json({
-        success: true,
-        sortingCenters: sortingCenters.map(sc => ({
-            id: sc.id,
-            fullname: sc.fullname,
-            province: sc.province,
-            phone: sc.phone,
-            address: sc.address,
-            location: sc.location
-        }))
-    });
-});
-
-// دریافت اتصالات راننده
-app.get('/api/driver/connections', auth, (req, res) => {
-    if (req.user.role !== 'driver') {
-        return res.status(403).json({
-            success: false,
-            message: 'Only drivers can access this endpoint'
-        });
-    }
-
-    const driverConnections = connections.filter(c => 
-        c.sourceId === req.user.id && c.sourceRole === 'driver'
-    );
-
-    res.json({
-        success: true,
-        connections: driverConnections
     });
 });
 
@@ -878,6 +746,7 @@ app.post('/api/requests/consolidate', auth, (req, res) => {
             });
         }
 
+        // Create consolidated delivery request
         const newRequest = {
             id: requests.length + 1,
             type: 'delivered_basket',
@@ -894,6 +763,7 @@ app.post('/api/requests/consolidate', auth, (req, res) => {
 
         requests.push(newRequest);
 
+        // Mark original missions as consolidated
         missionIds.forEach(missionId => {
             const mission = requests.find(r => r.id === missionId);
             if (mission) {
@@ -929,6 +799,7 @@ app.post('/api/requests/:id/reject', auth, (req, res) => {
             });
         }
 
+        // Update request status
         request.status = 'rejected';
         request.rejectionReason = reason;
         request.completedAt = new Date().toISOString();
@@ -960,6 +831,7 @@ app.post('/api/users/reset-password', async (req, res) => {
             });
         }
 
+        // Hash new password
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
 
@@ -977,24 +849,17 @@ app.post('/api/users/reset-password', async (req, res) => {
     }
 });
 
-// === CATCH-ALL ROUTE ===
+// === CATCH-ALL ROUTE - FIXED VERSION ===
+// این route باید حتما آخرین route باشه
 app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
- console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 Web Frontend: ${process.env.WEB_URL}`);
     console.log(`📱 Mobile Frontend: ${process.env.MOBILE_URL}`);
     console.log(`🔗 Test URL: http://localhost:${PORT}/api/test`);
-    console.log(`🔐 Auth URL: http://localhost:${PORT}/api/auth`);
-    console.log(`📊 endpoint:new`);
-    console.log(`   - /api/sorting/connection-requests`);
-    console.log(`   - /api/sorting/approved-connections`);
-    console.log(`   - /api/sorting/transport-requests`);
-    console.log(`   - /api/greenhouse/sorting-centers`);
-    console.log(`   - /api/greenhouse/connections`);
-    console.log(`   - /api/driver/sorting-centers`);
-    console.log(`   - /api/driver/connections`);
+    console.log(`🔐 Auth URL: http://localhost:${PORT}/api/auth`); // ✅ اضافه کنید
 });
