@@ -723,11 +723,13 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
-        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
-        
-        const connections = await Connection.find();
-        
-        console.log('✅ اتصالات یافت شده:', connections.length);
+        const loggedInUserId = parseInt(req.user.id);
+        const connections = await Connection.find({
+            $or: [
+                { sourceId: loggedInUserId },
+                { targetId: loggedInUserId }
+            ]
+        });
         
         res.json({
             success: true,
@@ -925,35 +927,18 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
 // === درخواست‌ها ===
 app.get('/api/requests', auth, async (req, res) => {
     try {
-        const requests = await Request.find();
+        const loggedInUserId = parseInt(req.user.id);
+        const requests = await Request.find({
+            $or: [
+                { greenhouseId: loggedInUserId },
+                { sortingCenterId: loggedInUserId },
+                { driverId: loggedInUserId }
+            ]
+        });
         
         res.json({
             success: true,
-            requests: requests.map(req => ({
-                id: req.id,
-                greenhouseId: req.greenhouseId,
-                greenhouseName: req.greenhouseName,
-                greenhousePhone: req.greenhousePhone,
-                greenhouseAddress: req.greenhouseAddress,
-                sortingCenterId: req.sortingCenterId,
-                sortingCenterName: req.sortingCenterName,
-                driverId: req.driverId,
-                driverName: req.driverName,
-                driverPhone: req.driverPhone,
-                driverLicensePlate: req.driverLicensePlate,
-                type: req.type,
-                quantity: req.quantity,
-                description: req.description,
-                location: req.location,
-                status: req.status,
-                isPickupConfirmed: req.isPickupConfirmed,
-                isConsolidated: req.isConsolidated,
-                rejectionReason: req.rejectionReason,
-                assignedAt: req.assignedAt,
-                acceptedAt: req.acceptedAt,
-                completedAt: req.completedAt,
-                createdAt: req.createdAt
-            }))
+            requests
         });
     } catch (error) {
         console.error('خطای دریافت درخواست‌ها:', error);
@@ -1018,19 +1003,6 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(403).json({ success: false, message: 'مجوز بروزرسانی این درخواست را ندارید' });
         }
         
-        // Logic to update driver's capacity when they accept a mission
-        if (req.body.status === 'in_progress' && request.status === 'assigned') {
-            const driver = await User.findOne({ id: request.driverId });
-            if (driver) {
-                if (request.type === 'empty') {
-                    driver.emptyBaskets -= request.quantity;
-                } else if (request.type === 'full') {
-                    driver.loadCapacity -= request.quantity;
-                }
-                await driver.save();
-            }
-        }
-
         // Logic to update driver's capacity when they accept a mission
         if (req.body.status === 'in_progress' && request.status === 'assigned') {
             const driver = await User.findOne({ id: request.driverId });

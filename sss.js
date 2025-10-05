@@ -771,25 +771,23 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
 
-        // **راه حل جدید: پیدا کردن تمام مراکز سورتینگ و استفاده از اولین مورد**
-        const sortingCenters = await User.find({ role: 'sorting' });
-        
-        if (sortingCenters.length === 0) {
-            console.error('❌ هیچ مرکز سورتینگی در سیستم وجود ندارد');
+        // **منطق اصلاح شده: استفاده از targetId ارسال شده**
+        const targetUser = await User.findOne({ id: parseInt(targetId), role: 'sorting' });
+
+        if (!targetUser) {
+            console.error(`❌ مرکز سورتینگی با id: ${targetId} یافت نشد.`);
             return res.status(404).json({
                 success: false,
-                message: 'هیچ مرکز سورتینگی در سیستم وجود ندارد'
+                message: 'مرکز سورتینگ انتخاب شده معتبر نیست یا یافت نشد.'
             });
         }
-
-        // استفاده از اولین مرکز سورتینگ موجود
-        const targetUser = sortingCenters[0];
-        console.log('✅ استفاده از مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
+        
+        console.log('✅ اتصال به مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
-            targetId: targetUser.id
+            targetId: parseInt(targetId)
         });
 
         if (existingConnection) {
