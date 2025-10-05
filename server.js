@@ -572,8 +572,10 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             });
         }
 
-        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
-            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
+        // Fix: Ensure type-safe comparison for authorization
+        const loggedInUserId = parseInt(req.user.id);
+        if ((ad.adType === 'supply' && parseInt(ad.sellerId) !== loggedInUserId) || 
+            (ad.adType === 'demand' && parseInt(ad.buyerId) !== loggedInUserId)) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این آگهی را ندارید'
@@ -851,7 +853,9 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        if (connection.targetId !== req.user.id) {
+        // Fix: Ensure type-safe comparison for authorization
+        if (parseInt(connection.targetId) !== parseInt(req.user.id)) {
+            console.log(`AuthZ Check Failed: Connection targetId (${connection.targetId}, type: ${typeof connection.targetId}) does not match user ID (${req.user.id}, type: ${typeof req.user.id})`);
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
@@ -893,7 +897,9 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        if (connection.sourceId !== req.user.id && connection.targetId !== req.user.id) {
+        // Fix: Ensure type-safe comparison for authorization
+        const loggedInUserId = parseInt(req.user.id);
+        if (parseInt(connection.sourceId) !== loggedInUserId && parseInt(connection.targetId) !== loggedInUserId) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این اتصال را ندارید'
@@ -996,31 +1002,59 @@ app.post('/api/requests', auth, async (req, res) => {
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
+        const request = await Request.findOne({ id: requestId });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
+        }
+
+        // Authorization Check
+        const loggedInUserId = parseInt(req.user.id);
+        const isDriver = request.driverId && parseInt(request.driverId) === loggedInUserId;
+        const isGreenhouse = parseInt(request.greenhouseId) === loggedInUserId;
+        const isSortingCenter = parseInt(request.sortingCenterId) === loggedInUserId;
+
+        if (!isDriver && !isGreenhouse && !isSortingCenter) {
+            return res.status(403).json({ success: false, message: 'مجوز بروزرسانی این درخواست را ندارید' });
+        }
         
+        // Logic to update driver's capacity when they accept a mission
+        if (req.body.status === 'in_progress' && request.status === 'assigned') {
+            const driver = await User.findOne({ id: request.driverId });
+            if (driver) {
+                if (request.type === 'empty') {
+                    driver.emptyBaskets -= request.quantity;
+                } else if (request.type === 'full') {
+                    driver.loadCapacity -= request.quantity;
+                }
+                await driver.save();
+            }
+        }
+
+        // Logic to update driver's capacity when they accept a mission
+        if (req.body.status === 'in_progress' && request.status === 'assigned') {
+            const driver = await User.findOne({ id: request.driverId });
+            if (driver) {
+                if (request.type === 'empty') {
+                    driver.emptyBaskets -= request.quantity;
+                } else if (request.type === 'full') {
+                    driver.loadCapacity -= request.quantity;
+                }
+                await driver.save();
+            }
+        }
+
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             req.body,
             { new: true }
         );
 
-        if (!updatedRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
-        }
-
-        res.json({
-            success: true,
-            request: updatedRequest
-        });
+        res.json({ success: true, request: updatedRequest });
 
     } catch (error) {
         console.error('خطای بروزرسانی درخواست:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در بروزرسانی درخواست'
-        });
+        res.status(500).json({ success: false, message: 'خطای سرور در بروزرسانی درخواست' });
     }
 });
 
@@ -1036,7 +1070,9 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
+        // Fix: Ensure type-safe comparison for authorization
+        const loggedInUserId = parseInt(req.user.id);
+        if (parseInt(request.greenhouseId) !== loggedInUserId && parseInt(request.sortingCenterId) !== loggedInUserId) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این درخواست را ندارید'

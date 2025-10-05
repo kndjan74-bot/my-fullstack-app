@@ -1632,7 +1632,7 @@ function createDriverMap(lat, lng) {
         async function updateDriverLocationInStorage() {
             // This function is called frequently by GPS updates.
             // It should be a lightweight call to the server.
-            await api.updateUser(currentUser.id, { location: currentUser.location });
+            await api.updateUser({ location: currentUser.location });
             // No need for feedback here, it's a background task.
         }
         
@@ -3410,7 +3410,7 @@ function refreshAllMapMarkers() {
                 lastStatusUpdate: new Date().toISOString()
             };
 
-            const response = await api.updateUser(currentUser.id, updates);
+            const response = await api.updateUser(updates);
 
             if (response.success) {
                 // Update local user object
