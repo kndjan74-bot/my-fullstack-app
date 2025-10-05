@@ -572,11 +572,8 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             });
         }
 
-        // بررسی مجوز حذف - مالک آگهی می‌تواند حذف کند
-        const isOwner = (ad.adType === 'supply' && ad.sellerId === req.user.id) || 
-                       (ad.adType === 'demand' && ad.buyerId === req.user.id);
-        
-        if (!isOwner) {
+        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
+            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این آگهی را ندارید'
@@ -700,11 +697,10 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
         const conversationId = req.params.conversationId;
         const [user1Id, user2Id] = conversationId.split('-').map(Number);
 
-        // هر کاربر می‌تواند مکالمه خودش را حذف کند
         const result = await Message.deleteMany({
             $or: [
-                { senderId: req.user.id, recipientId: user1Id === req.user.id ? user2Id : user1Id },
-                { recipientId: req.user.id, senderId: user1Id === req.user.id ? user2Id : user1Id }
+                { senderId: user1Id, recipientId: user2Id },
+                { senderId: user2Id, recipientId: user1Id }
             ]
         });
 
@@ -725,14 +721,18 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
+        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
+        
         const connections = await Connection.find();
+        
+        console.log('✅ اتصالات یافت شده:', connections.length);
         
         res.json({
             success: true,
             connections
         });
     } catch (error) {
-        console.error('خطای دریافت اتصالات:', error);
+        console.error('❌ خطای GET /api/connections:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت اتصالات'
@@ -742,33 +742,20 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        console.log('📡 درخواست POST /api/connections - داده دریافتی:', JSON.stringify(req.body, null, 2));
+        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
 
         let { targetId } = req.body;
 
-        // اگر targetId یک آبجکت است، مقدار صحیح را استخراج کن
-        if (targetId && typeof targetId === 'object') {
-            console.log('🔧 targetId یک آبجکت است، استخراج مقدار...');
-            if (targetId.targetId) {
-                targetId = targetId.targetId;
-            } else if (targetId.id) {
-                targetId = targetId.id;
-            } else {
-                // اگر نتوانستیم مقدار را استخراج کنیم، از اولین کلید عددی استفاده کنیم
-                const keys = Object.keys(targetId).filter(key => !isNaN(parseInt(key)));
-                if (keys.length > 0) {
-                    targetId = parseInt(keys[0]);
-                }
-            }
+        // استخراج targetId از object اگر لازم باشد
+        if (targetId && typeof targetId === 'object' && targetId.targetId) {
+            console.log('🔧 استخراج targetId از object...');
+            targetId = targetId.targetId;
         }
 
-        // اطمینان از اینکه targetId یک عدد است
-        targetId = parseInt(targetId);
-
-        if (!targetId || isNaN(targetId)) {
+        if (!targetId && targetId !== 0) {
             return res.status(400).json({
                 success: false,
-                message: 'شناسه مقصد معتبر نیست'
+                message: 'شناسه مقصد الزامی است'
             });
         }
 
@@ -782,43 +769,43 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
-        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role, '- ID:', sourceUser.id);
+        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
 
-        const targetUser = await User.findOne({ id: targetId });
+        // **منطق اصلاح شده: استفاده از targetId ارسال شده**
+        const targetUser = await User.findOne({ id: parseInt(targetId), role: 'sorting' });
+
         if (!targetUser) {
+            console.error(`❌ مرکز سورتینگی با id: ${targetId} یافت نشد.`);
             return res.status(404).json({
                 success: false,
-                message: 'کاربر مقصد یافت نشد'
+                message: 'مرکز سورتینگ انتخاب شده معتبر نیست یا یافت نشد.'
             });
         }
-
-        console.log('✅ کاربر مقصد:', targetUser.fullname, '- نقش:', targetUser.role, '- ID:', targetUser.id);
+        
+        console.log('✅ اتصال به مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
             sourceId: req.user.id,
-            targetId: targetId
+            targetId: parseInt(targetId)
         });
 
         if (existingConnection) {
-            console.log('⚠️ اتصال تکراری وجود دارد');
+            console.log('⚠️ اتصال تکراری');
             return res.status(400).json({
                 success: false,
-                message: 'قبلاً به این کاربر متصل شده‌اید'
+                message: 'قبلاً به این مرکز سورتینگ متصل شده‌اید'
             });
         }
 
         // ایجاد اتصال جدید
-        const connectionId = await getNextSequence('connection');
-        console.log('🆔 ایجاد اتصال جدید با ID:', connectionId);
-
         const connectionData = {
-            id: connectionId,
+            id: await getNextSequence('connection'),
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
-            targetId: targetId,
+            targetId: targetUser.id,
             status: 'pending'
         };
 
@@ -829,12 +816,12 @@ app.post('/api/connections', auth, async (req, res) => {
             connectionData.sourceAddress = sourceUser.address;
         }
 
-        console.log('📝 داده‌های اتصال:', connectionData);
+        console.log('📝 ایجاد اتصال...');
 
         const newConnection = new Connection(connectionData);
         await newConnection.save();
 
-        console.log('✅ اتصال با موفقیت ایجاد شد:', newConnection.id);
+        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
         res.status(201).json({
             success: true,
@@ -846,7 +833,7 @@ app.post('/api/connections', auth, async (req, res) => {
         console.error('💥 خطا در ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در ایجاد اتصال: ' + error.message
+            message: 'خطای سرور: ' + error.message
         });
     }
 });
@@ -864,10 +851,7 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // بررسی مجوز: فقط هدف اتصال (مرکز سورتینگ) می‌تواند وضعیت را تغییر دهد
-        const canUpdate = connection.targetId === req.user.id;
-        
-        if (!canUpdate) {
+        if (connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
@@ -909,10 +893,7 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // بررسی مجوز: فقط مبدأ یا هدف اتصال می‌توانند حذف کنند
-        const canDelete = connection.sourceId === req.user.id || connection.targetId === req.user.id;
-        
-        if (!canDelete) {
+        if (connection.sourceId !== req.user.id && connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این اتصال را ندارید'
@@ -1015,32 +996,19 @@ app.post('/api/requests', auth, async (req, res) => {
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
-        const request = await Request.findOne({ id: requestId });
-
-        if (!request) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
-        }
-
-        // بررسی مجوز: گلخانه‌دار، مرکز سورتینگ یا راننده مرتبط می‌توانند بروزرسانی کنند
-        const canUpdate = request.greenhouseId === req.user.id || 
-                         request.sortingCenterId === req.user.id || 
-                         request.driverId === req.user.id;
         
-        if (!canUpdate) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز بروزرسانی این درخواست را ندارید'
-            });
-        }
-
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             req.body,
             { new: true }
         );
+
+        if (!updatedRequest) {
+            return res.status(404).json({
+                success: false,
+                message: 'درخواست یافت نشد'
+            });
+        }
 
         res.json({
             success: true,
@@ -1068,10 +1036,7 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        // بررسی مجوز: فقط گلخانه‌دار یا مرکز سورتینگ می‌توانند حذف کنند
-        const canDelete = request.greenhouseId === req.user.id || request.sortingCenterId === req.user.id;
-        
-        if (!canDelete) {
+        if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز حذف این درخواست را ندارید'
