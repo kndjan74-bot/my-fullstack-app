@@ -721,18 +721,26 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
-        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
-        
         const connections = await Connection.find();
-        
-        console.log('✅ اتصالات یافت شده:', connections.length);
         
         res.json({
             success: true,
-            connections
+            connections: connections.map(conn => ({
+                id: conn.id,
+                sourceId: conn.sourceId,
+                sourceName: conn.sourceName,
+                sourceRole: conn.sourceRole,
+                sourcePhone: conn.sourcePhone,
+                sourceLicensePlate: conn.sourceLicensePlate,
+                sourceAddress: conn.sourceAddress,
+                targetId: conn.targetId,
+                status: conn.status,
+                suspended: conn.suspended,
+                createdAt: conn.createdAt
+            }))
         });
     } catch (error) {
-        console.error('❌ خطای GET /api/connections:', error);
+        console.error('خطای دریافت اتصالات:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت اتصالات'
@@ -742,24 +750,14 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
+        const { targetId } = req.body;
 
-        let { targetId } = req.body;
-
-        // استخراج targetId از object اگر لازم باشد
-        if (targetId && typeof targetId === 'object' && targetId.targetId) {
-            console.log('🔧 استخراج targetId از object...');
-            targetId = targetId.targetId;
-        }
-
-        if (!targetId && targetId !== 0) {
+        if (!targetId) {
             return res.status(400).json({
                 success: false,
                 message: 'شناسه مقصد الزامی است'
             });
         }
-
-        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
         const sourceUser = await User.findOne({ id: req.user.id });
         if (!sourceUser) {
@@ -769,20 +767,13 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
-        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
-
-        // **منطق اصلاح شده: استفاده از targetId ارسال شده**
-        const targetUser = await User.findOne({ id: parseInt(targetId), role: 'sorting' });
-
+        const targetUser = await User.findOne({ id: parseInt(targetId) });
         if (!targetUser) {
-            console.error(`❌ مرکز سورتینگی با id: ${targetId} یافت نشد.`);
             return res.status(404).json({
                 success: false,
-                message: 'مرکز سورتینگ انتخاب شده معتبر نیست یا یافت نشد.'
+                message: 'کاربر مقصد یافت نشد'
             });
         }
-        
-        console.log('✅ اتصال به مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
@@ -791,10 +782,9 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
         if (existingConnection) {
-            console.log('⚠️ اتصال تکراری');
             return res.status(400).json({
                 success: false,
-                message: 'قبلاً به این مرکز سورتینگ متصل شده‌اید'
+                message: 'قبلاً به این کاربر متصل شده‌اید'
             });
         }
 
@@ -816,12 +806,8 @@ app.post('/api/connections', auth, async (req, res) => {
             connectionData.sourceAddress = sourceUser.address;
         }
 
-        console.log('📝 ایجاد اتصال...');
-
         const newConnection = new Connection(connectionData);
         await newConnection.save();
-
-        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
         res.status(201).json({
             success: true,
@@ -830,10 +816,10 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('💥 خطا در ایجاد اتصال:', error);
+        console.error('خطای ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور: ' + error.message
+            message: 'خطای سرور در ایجاد اتصال'
         });
     }
 });
@@ -851,6 +837,7 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
+        // بررسی مجوز - فقط مرکز سورتینگ می‌تواند اتصال‌های دریافتی را تأیید/رد کند
         if (connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
@@ -1390,8 +1377,6 @@ app.post('/api/users/reset-password', async (req, res) => {
 // === مسیرهای دیباگ ===
 app.get('/api/debug/system', auth, async (req, res) => {
     try {
-        console.log('🔧 درخواست دیباگ سیستم از کاربر:', req.user.id);
-
         const currentUser = await User.findOne({ id: req.user.id });
         const allUsers = await User.find({}, 'fullname role phone');
         const allConnections = await Connection.find();
@@ -1429,7 +1414,7 @@ app.get('/api/debug/system', auth, async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('❌ خطای دیباگ سیستم:', error);
+        console.error('خطای دیباگ سیستم:', error);
         res.status(500).json({
             success: false,
             message: 'خطای دیباگ: ' + error.message
@@ -1449,12 +1434,12 @@ app.post('/api/debug/update-user-ids', async (req, res) => {
             counter = lastUser.id + 1;
         }
 
-        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
+        console.log(`شروع بروزرسانی ${users.length} کاربر...`);
 
         for (const user of users) {
             user.id = counter;
             await user.save();
-            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
+            console.log(`بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
             counter++;
         }
 
@@ -1464,7 +1449,7 @@ app.post('/api/debug/update-user-ids', async (req, res) => {
             updatedCount: users.length
         });
     } catch (error) {
-        console.error('❌ خطا در بروزرسانی:', error);
+        console.error('خطا در بروزرسانی:', error);
         res.status(500).json({
             success: false,
             message: error.message
@@ -1482,5 +1467,4 @@ app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
-    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
 });
