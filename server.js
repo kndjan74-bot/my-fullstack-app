@@ -851,7 +851,8 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        if (connection.targetId !== req.user.id) {
+        // رفع اشکال: مقایسه با نادیده گرفتن نوع داده برای جلوگیری از خطای رشته در مقابل عدد
+        if (connection.targetId != req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
