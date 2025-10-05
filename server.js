@@ -1,1487 +1,966 @@
+// =================================================================
+//                        SoodCity Backend
+// =================================================================
+
+// ----------------- Import Dependencies -----------------
 const express = require('express');
+const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const path = require('path');
-const mongoose = require('mongoose');
+require('dotenv').config(); // Load environment variables
 
+// ----------------- Initializations -----------------
 const app = express();
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your_default_jwt_secret_key_12345';
 
-// اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@sabalan.liara.cloud:32460/my-app?authSource=admin', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => console.log('✅ متصل به MongoDB شد'))
-.catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
+// ----------------- Middleware -----------------
+app.use(cors());
+app.use(express.json({ limit: '5mb' })); // For parsing application/json and increasing payload limit for images
 
-// ==================== مدل شمارنده برای ID عددی ====================
+// ----------------- MongoDB Connection -----------------
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://liara:password@localhost:27017/soodcitydb';
+
+mongoose.connect(MONGODB_URI)
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+
+// ----------------- Database Schemas & Models -----------------
+
+// --- Counter for Auto-Incrementing IDs ---
 const CounterSchema = new mongoose.Schema({
     _id: { type: String, required: true },
     seq: { type: Number, default: 0 }
 });
 const Counter = mongoose.model('Counter', CounterSchema);
 
+// Helper function to get the next sequence value
 const getNextSequence = async (name) => {
-    const counter = await Counter.findByIdAndUpdate(
-        name,
-        { $inc: { seq: 1 } },
-        { new: true, upsert: true }
-    );
-    return counter.seq;
+    const ret = await Counter.findByIdAndUpdate(name, { $inc: { seq: 1 } }, { new: true, upsert: true });
+    return ret.seq;
 };
 
-// ==================== مدل‌های دیتابیس با ID عددی ====================
+// --- User Schema ---
 const UserSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
-    role: { type: String, required: true, enum: ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'] },
     fullname: { type: String, required: true },
-    province: { type: String, required: true },
     phone: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    address: { type: String, default: '' },
-    licensePlate: { type: String, default: '' },
+    role: { type: String, required: true, enum: ['greenhouse', 'sorting', 'driver', 'farmer', 'buyer'] },
+    province: { type: String, required: true },
+    address: { type: String },
+    licensePlate: { type: String }, // Specific to drivers
     location: {
-        lat: { type: Number, default: 35.6892 },
-        lng: { type: Number, default: 51.3890 }
+        lat: { type: Number },
+        lng: { type: Number }
     },
+    // Driver-specific capacity fields
     emptyBaskets: { type: Number, default: 0 },
     loadCapacity: { type: Number, default: 0 },
-    dailyStatusSubmitted: { type: Boolean, default: false },
-    lastStatusUpdate: { type: Date },
     createdAt: { type: Date, default: Date.now }
 });
 
-const ConnectionSchema = new mongoose.Schema({
-    id: { type: Number, unique: true },
-    sourceId: { type: Number, required: true },
-    sourceName: { type: String, required: true },
-    sourceRole: { type: String, required: true },
-    sourcePhone: { type: String, required: true },
-    sourceLicensePlate: { type: String, default: '' },
-    sourceAddress: { type: String, default: '' },
-    targetId: { type: Number, required: true },
-    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-    suspended: { type: Boolean, default: false },
-    createdAt: { type: Date, default: Date.now }
+// Auto-increment middleware for User ID
+UserSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('userId');
+    }
+    next();
 });
+const User = mongoose.model('User', UserSchema);
 
-const RequestSchema = new mongoose.Schema({
-    id: { type: Number, unique: true },
-    greenhouseId: { type: Number, required: true },
-    greenhouseName: { type: String, required: true },
-    greenhousePhone: { type: String, required: true },
-    greenhouseAddress: { type: String, required: true },
-    sortingCenterId: { type: Number, required: true },
-    sortingCenterName: { type: String, required: true },
-    driverId: { type: Number },
-    driverName: { type: String },
-    driverPhone: { type: String },
-    driverLicensePlate: { type: String },
-    type: { type: String, enum: ['empty', 'full', 'delivered_basket'], required: true },
-    quantity: { type: Number, required: true },
-    description: { type: String, default: '' },
-    location: {
-        lat: { type: Number, required: true },
-        lng: { type: Number, required: true }
-    },
-    status: { 
-        type: String, 
-        enum: ['pending', 'assigned', 'in_progress', 'in_progress_to_sorting', 'completed', 'rejected'], 
-        default: 'pending' 
-    },
-    isPickupConfirmed: { type: Boolean, default: false },
-    isConsolidated: { type: Boolean, default: false },
-    rejectionReason: { type: String },
-    assignedAt: { type: Date },
-    acceptedAt: { type: Date },
-    completedAt: { type: Date },
-    createdAt: { type: Date, default: Date.now }
-});
 
-const MessageSchema = new mongoose.Schema({
-    id: { type: Number, unique: true },
-    adId: { type: Number, required: true },
-    senderId: { type: Number, required: true },
-    senderName: { type: String, required: true },
-    recipientId: { type: Number, required: true },
-    recipientName: { type: String, required: true },
-    content: { type: String, default: '' },
-    image: { type: String },
-    read: { type: Boolean, default: false },
-    createdAt: { type: Date, default: Date.now }
-});
-
+// --- Ad (Marketplace) Schema ---
 const AdSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
+    adType: { type: String, required: true, enum: ['supply', 'demand'] },
     product: { type: String, required: true },
     category: { type: String, required: true },
     quantity: { type: Number, required: true },
     price: { type: Number, required: true },
-    emoji: { type: String, required: true },
-    image: { type: String },
-    adType: { type: String, enum: ['supply', 'demand'], required: true },
+    emoji: { type: String },
+    image: { type: String }, // Base64 encoded string
+    sellerId: { type: Number, ref: 'User' },
     seller: { type: String },
-    sellerId: { type: Number },
+    buyerId: { type: Number, ref: 'User' },
     buyer: { type: String },
-    buyerId: { type: Number },
-    date: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
 });
 
-// ایجاد مدل‌ها
-const User = mongoose.model('User', UserSchema);
-const Connection = mongoose.model('Connection', ConnectionSchema);
-const Request = mongoose.model('Request', RequestSchema);
-const Message = mongoose.model('Message', MessageSchema);
+// Auto-increment middleware for Ad ID
+AdSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('adId');
+    }
+    next();
+});
 const Ad = mongoose.model('Ad', AdSchema);
 
-// ==================== Middleware ====================
-app.use(cors({
-    origin: [
-        'https://www.soodcity.ir',
-        'https://soodcity.ir', 
-        'http://localhost:3000',
-        'http://localhost:5000',
-        'capacitor://localhost',
-        'https://soodcityb.liara.run'
-    ],
-    credentials: true
-}));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// JWT Secret
-const JWT_SECRET = process.env.JWT_SECRET || 'کلید-رمز-جی-دبلیو-تی-شما-در-محیط-تولید-تغییر-کند';
+// --- Connection Schema ---
+const ConnectionSchema = new mongoose.Schema({
+    id: { type: Number, unique: true },
+    sourceId: { type: Number, required: true, ref: 'User' },
+    sourceName: { type: String, required: true },
+    sourceRole: { type: String, required: true },
+    sourcePhone: { type: String },
+    sourceLicensePlate: { type: String }, // if driver
+    sourceAddress: { type: String },    // if greenhouse
+    targetId: { type: Number, required: true, ref: 'User' }, // Always a sorting center
+    status: { type: String, default: 'pending', enum: ['pending', 'approved'] },
+    suspended: { type: Boolean, default: false }, // Sorting center can suspend a driver
+    createdAt: { type: Date, default: Date.now }
+});
 
-// میدلور احراز هویت
-const auth = async (req, res, next) => {
-    const token = req.header('x-auth-token');
-    
-    if (!token) {
-        return res.status(401).json({ 
-            success: false, 
-            message: 'توکن وجود ندارد، دسترسی غیرمجاز' 
-        });
+// Auto-increment middleware for Connection ID
+ConnectionSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('connectionId');
     }
+    next();
+});
+const Connection = mongoose.model('Connection', ConnectionSchema);
 
+
+// --- Request (Mission) Schema ---
+const RequestSchema = new mongoose.Schema({
+    id: { type: Number, unique: true },
+    // --- Requester Info (Greenhouse/Farmer) ---
+    greenhouseId: { type: Number, ref: 'User' },
+    greenhouseName: { type: String },
+    greenhousePhone: { type: String },
+    greenhouseAddress: { type: String },
+    farmerId: { type: Number, ref: 'User' }, // For future use
+    // --- Destination Info ---
+    sortingCenterId: { type: Number, required: true, ref: 'User' },
+    sortingCenterName: { type: String },
+    // --- Driver Info ---
+    driverId: { type: Number, ref: 'User' },
+    driverName: { type: String },
+    driverPhone: { type: String },
+    driverLicensePlate: { type: String },
+    // --- Request Details ---
+    type: { type: String, required: true, enum: ['empty', 'full', 'delivered_basket'] },
+    quantity: { type: Number, required: true },
+    description: { type: String },
+    location: { // Location of the pickup (greenhouse)
+        lat: { type: Number },
+        lng: { type: Number }
+    },
+    status: {
+        type: String,
+        default: 'pending',
+        enum: ['pending', 'assigned', 'in_progress', 'completed', 'rejected', 'in_progress_to_sorting']
+    },
+    // --- Timestamps & Flags ---
+    createdAt: { type: Date, default: Date.now },
+    assignedAt: { type: Date },
+    acceptedAt: { type: Date },
+    completedAt: { type: Date },
+    isPickupConfirmed: { type: Boolean, default: false }, // For two-step confirmation
+    isConsolidated: { type: Boolean, default: false }, // For consolidating 'full' requests
+    rejectionReason: { type: String }, // If a 'delivered_basket' request is rejected
+});
+
+// Auto-increment middleware for Request ID
+RequestSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('requestId');
+    }
+    next();
+});
+const Request = mongoose.model('Request', RequestSchema);
+
+
+// --- Message Schema ---
+const MessageSchema = new mongoose.Schema({
+    id: { type: Number, unique: true },
+    adId: { type: Number, ref: 'Ad' },
+    conversationId: { type: String, required: true, index: true }, // e.g., 'senderId-recipientId' sorted
+    senderId: { type: Number, required: true, ref: 'User' },
+    senderName: { type: String, required: true },
+    recipientId: { type: Number, required: true, ref: 'User' },
+    recipientName: { type: String, required: true },
+    content: { type: String },
+    image: { type: String }, // Base64 encoded string
+    read: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now }
+});
+
+// Auto-increment middleware for Message ID
+MessageSchema.pre('save', async function(next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('messageId');
+    }
+    next();
+});
+const Message = mongoose.model('Message', MessageSchema);
+
+
+// ----------------- Auth Middleware -----------------
+const auth = (req, res, next) => {
+    const token = req.header('x-auth-token');
+    if (!token) {
+        return res.status(401).json({ msg: 'No token, authorization denied' });
+    }
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded;
+        req.user = decoded.user;
         next();
     } catch (err) {
-        res.status(401).json({ 
-            success: false, 
-            message: 'توکن معتبر نیست' 
-        });
+        res.status(401).json({ msg: 'Token is not valid' });
     }
 };
 
-// ==================== مسیرهای اصلی API ====================
 
-// === بررسی سلامت ===
-app.get('/api/health', (req, res) => {
-    res.json({ 
-        success: true, 
-        message: 'API سودسیتی در حال اجراست!',
-        timestamp: new Date().toISOString(),
-        database: mongoose.connection.readyState === 1 ? 'متصل' : 'قطع'
-    });
+// ----------------- API Routes (to be implemented) -----------------
+app.get('/api', (req, res) => {
+    res.send('SoodCity API is running...');
 });
 
-// === کاربران ===
-app.get('/api/users', auth, async (req, res) => {
-    try {
-        const users = await User.find({}, { password: 0 });
-        res.json({
-            success: true,
-            users: users.map(u => ({
-                id: u.id,
-                role: u.role,
-                fullname: u.fullname,
-                province: u.province,
-                phone: u.phone,
-                address: u.address,
-                licensePlate: u.licensePlate,
-                location: u.location,
-                emptyBaskets: u.emptyBaskets || 0,
-                loadCapacity: u.loadCapacity || 0
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت کاربران:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت کاربران'
-        });
+// ----------------- API Routes -----------------
+
+const userRouter = express.Router();
+
+// --- 1. Register a new user ---
+userRouter.post('/register', async (req, res) => {
+    const { fullname, phone, password, role, province, address, licensePlate } = req.body;
+
+    // Basic validation
+    if (!fullname || !phone || !password || !role || !province) {
+        return res.status(400).json({ msg: 'Please enter all required fields' });
     }
-});
 
-app.post('/api/users/register', async (req, res) => {
     try {
-        const { role, fullname, province, phone, password, address, licensePlate } = req.body;
-
-        const existingUser = await User.findOne({ phone });
-        if (existingUser) {
-            return res.status(400).json({
-                success: false,
-                message: 'کاربری با این شماره تلفن قبلاً ثبت نام کرده است'
-            });
+        let user = await User.findOne({ phone });
+        if (user) {
+            return res.status(400).json({ msg: 'User with this phone number already exists' });
         }
 
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        const newUser = new User({
-            id: await getNextSequence('user'),
-            role,
+        user = new User({
             fullname,
-            province,
             phone,
-            password: hashedPassword,
-            address: address || '',
-            licensePlate: licensePlate || ''
+            password,
+            role,
+            province,
+            address,
+            licensePlate: role === 'driver' ? licensePlate : undefined
         });
 
-        await newUser.save();
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(password, salt);
 
-        const token = jwt.sign(
-            { id: newUser.id, phone: newUser.phone, role: newUser.role },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
+        await user.save();
 
-        res.status(201).json({
-            success: true,
-            token,
-            user: {
-                id: newUser.id,
-                role: newUser.role,
-                fullname: newUser.fullname,
-                province: newUser.province,
-                phone: newUser.phone,
-                address: newUser.address,
-                licensePlate: newUser.licensePlate,
-                location: newUser.location,
-                emptyBaskets: newUser.emptyBaskets,
-                loadCapacity: newUser.loadCapacity
-            }
+        // Create JWT
+        const payload = { user: { id: user.id } };
+        jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
+            if (err) throw err;
+            // Return token and the user object (without password)
+            const userResponse = user.toObject();
+            delete userResponse.password;
+            res.json({ token, user: userResponse });
         });
 
-    } catch (error) {
-        console.error('خطای ثبت نام:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ثبت نام'
-        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.post('/api/users/login', async (req, res) => {
-    try {
-        const { phone, password } = req.body;
+// --- 2. Login a user ---
+userRouter.post('/login', async (req, res) => {
+    const { phone, password } = req.body;
 
-        const user = await User.findOne({ phone });
+    if (!phone || !password) {
+        return res.status(400).json({ msg: 'Please provide phone and password' });
+    }
+
+    try {
+        let user = await User.findOne({ phone });
         if (!user) {
-            return res.status(400).json({
-                success: false,
-                message: 'اطلاعات ورود نامعتبر است'
-            });
+            return res.status(400).json({ msg: 'Invalid credentials' });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            return res.status(400).json({
-                success: false,
-                message: 'اطلاعات ورود نامعتبر است'
-            });
+            return res.status(400).json({ msg: 'Invalid credentials' });
         }
 
-        const token = jwt.sign(
-            { id: user.id, phone: user.phone, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '30d' }
-        );
-
-        res.json({
-            success: true,
-            token,
-            user: {
-                id: user.id,
-                role: user.role,
-                fullname: user.fullname,
-                province: user.province,
-                phone: user.phone,
-                address: user.address,
-                licensePlate: user.licensePlate,
-                location: user.location,
-                emptyBaskets: user.emptyBaskets || 0,
-                loadCapacity: user.loadCapacity || 0
-            }
+        const payload = { user: { id: user.id } };
+        jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' }, (err, token) => {
+            if (err) throw err;
+            const userResponse = user.toObject();
+            delete userResponse.password;
+            res.json({ token, user: userResponse });
         });
 
-    } catch (error) {
-        console.error('خطای ورود:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ورود'
-        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.get('/api/users/auth', auth, async (req, res) => {
+// --- 3. Get authenticated user data ---
+userRouter.get('/auth', auth, async (req, res) => {
     try {
-        const user = await User.findOne({ id: req.user.id });
+        const user = await User.findOne({ id: req.user.id }).select('-password');
         if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر یافت نشد'
-            });
+            return res.status(404).json({ msg: 'User not found' });
         }
-
-        res.json({
-            success: true,
-            user: {
-                id: user.id,
-                role: user.role,
-                fullname: user.fullname,
-                province: user.province,
-                phone: user.phone,
-                address: user.address,
-                licensePlate: user.licensePlate,
-                location: user.location,
-                emptyBaskets: user.emptyBaskets || 0,
-                loadCapacity: user.loadCapacity || 0
-            }
-        });
-    } catch (error) {
-        console.error('خطای احراز هویت:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در احراز هویت'
-        });
+        res.json({ success: true, user });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.put('/api/users', auth, async (req, res) => {
+// --- 4. Get all users ---
+userRouter.get('/', auth, async (req, res) => {
     try {
-        const { location, emptyBaskets, loadCapacity, address } = req.body;
-        
-        const updatedUser = await User.findOneAndUpdate(
+        const users = await User.find().select('-password');
+        res.json({ success: true, users });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// --- 5. Update user details (profile, location, capacity) ---
+userRouter.put('/', auth, async (req, res) => {
+    const { location, emptyBaskets, loadCapacity, address } = req.body;
+    const updateFields = {};
+    if (location) updateFields.location = location;
+    if (address) updateFields.address = address;
+    if (typeof emptyBaskets !== 'undefined') updateFields.emptyBaskets = emptyBaskets;
+    if (typeof loadCapacity !== 'undefined') updateFields.loadCapacity = loadCapacity;
+
+    try {
+        const user = await User.findOneAndUpdate(
             { id: req.user.id },
-            {
-                ...(location && { location }),
-                ...(emptyBaskets !== undefined && { emptyBaskets }),
-                ...(loadCapacity !== undefined && { loadCapacity }),
-                ...(address && { address })
-            },
+            { $set: updateFields },
             { new: true }
-        );
+        ).select('-password');
 
-        if (!updatedUser) {
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر یافت نشد'
-            });
+        if (!user) {
+            return res.status(404).json({ msg: 'User not found' });
         }
 
-        res.json({
-            success: true,
-            user: {
-                id: updatedUser.id,
-                role: updatedUser.role,
-                fullname: updatedUser.fullname,
-                province: updatedUser.province,
-                phone: updatedUser.phone,
-                address: updatedUser.address,
-                licensePlate: updatedUser.licensePlate,
-                location: updatedUser.location,
-                emptyBaskets: updatedUser.emptyBaskets,
-                loadCapacity: updatedUser.loadCapacity
-            }
-        });
-
-    } catch (error) {
-        console.error('خطای بروزرسانی کاربر:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در بروزرسانی کاربر'
-        });
+        res.json({ success: true, msg: 'User updated successfully', user });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.put('/api/users/password', auth, async (req, res) => {
-    try {
-        const { currentPassword, newPassword } = req.body;
-        const user = await User.findOne({ id: req.user.id });
+// --- 6. Change password ---
+userRouter.put('/password', auth, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
 
+    try {
+        const user = await User.findOne({ id: req.user.id });
         if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر یافت نشد'
-            });
+            return res.status(404).json({ msg: 'User not found' });
         }
 
         const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch) {
-            return res.status(400).json({
-                success: false,
-                message: 'رمز عبور فعلی نادرست است'
-            });
+            return res.status(400).json({ msg: 'Current password is incorrect' });
         }
 
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
         await user.save();
 
-        res.json({
-            success: true,
-            message: 'رمز عبور با موفقیت بروزرسانی شد'
-        });
-
-    } catch (error) {
-        console.error('خطای تغییر رمز عبور:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در تغییر رمز عبور'
-        });
+        res.json({ success: true, msg: 'Password changed successfully' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.delete('/api/users', auth, async (req, res) => {
+// --- 7. Delete account ---
+userRouter.delete('/', auth, async (req, res) => {
+    try {
+        const user = await User.findOneAndDelete({ id: req.user.id });
+        if (!user) {
+            return res.status(404).json({ msg: 'User not found' });
+        }
+        // Optional: Add cleanup logic for related data (ads, messages, etc.) here
+        res.json({ success: true, msg: 'Account deleted successfully' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// --- 8. Reset password (for recovery) ---
+userRouter.post('/reset-password', async (req, res) => {
+    const { phone, newPassword } = req.body;
+    try {
+        const user = await User.findOne({ phone });
+        if (!user) {
+            return res.status(404).json({ msg: 'User with this phone number not found' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        await user.save();
+        
+        res.json({ success: true, msg: 'Password has been reset successfully.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+
+app.use('/api/users', userRouter);
+
+// ----------------- Connections API Routes -----------------
+const connectionRouter = express.Router();
+
+// --- 1. Get all connections relevant to the user ---
+connectionRouter.get('/', auth, async (req, res) => {
     try {
         const userId = req.user.id;
-
-        await Promise.all([
-            User.findOneAndDelete({ id: userId }),
-            Connection.deleteMany({ $or: [{ sourceId: userId }, { targetId: userId }] }),
-            Request.deleteMany({ 
-                $or: [
-                    { greenhouseId: userId }, 
-                    { driverId: userId }, 
-                    { sortingCenterId: userId }
-                ] 
-            }),
-            Message.deleteMany({ 
-                $or: [
-                    { senderId: userId }, 
-                    { recipientId: userId }
-                ] 
-            }),
-            Ad.deleteMany({ 
-                $or: [
-                    { sellerId: userId }, 
-                    { buyerId: userId }
-                ] 
-            })
-        ]);
-
-        res.json({
-            success: true,
-            message: 'حساب کاربری با موفقیت حذف شد'
-        });
-
-    } catch (error) {
-        console.error('خطای حذف کاربر:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف کاربر'
-        });
+        const connections = await Connection.find({
+            $or: [{ sourceId: userId }, { targetId: userId }]
+        }).sort({ createdAt: -1 });
+        res.json({ success: true, connections });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === آگهی‌ها ===
-app.get('/api/ads', auth, async (req, res) => {
-    try {
-        const ads = await Ad.find();
-        
-        res.json({
-            success: true,
-            ads: ads.map(ad => ({
-                id: ad.id,
-                product: ad.product,
-                category: ad.category,
-                quantity: ad.quantity,
-                price: ad.price,
-                emoji: ad.emoji,
-                image: ad.image,
-                adType: ad.adType,
-                seller: ad.seller,
-                sellerId: ad.sellerId,
-                buyer: ad.buyer,
-                buyerId: ad.buyerId,
-                date: ad.date,
-                createdAt: ad.createdAt
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت آگهی‌ها:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت آگهی‌ها'
-        });
+// --- 2. Create a new connection request ---
+connectionRouter.post('/', auth, async (req, res) => {
+    const { targetId } = req.body;
+    const sourceId = req.user.id;
+
+    if (!targetId) {
+        return res.status(400).json({ msg: 'Target ID is required.' });
     }
-});
 
-app.post('/api/ads', auth, async (req, res) => {
     try {
-        const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
+        const sourceUser = await User.findOne({ id: sourceId });
+        const targetUser = await User.findOne({ id: targetId });
 
-        const newAd = new Ad({
-            id: await getNextSequence('ad'),
-            product,
-            category,
-            quantity: parseInt(quantity),
-            price: parseInt(price),
-            emoji,
-            image: image || null,
-            adType,
-            seller: adType === 'supply' ? seller : undefined,
-            sellerId: adType === 'supply' ? sellerId : undefined,
-            buyer: adType === 'demand' ? buyer : undefined,
-            buyerId: adType === 'demand' ? buyerId : undefined,
-            date: new Date().toLocaleDateString('fa-IR')
-        });
-
-        await newAd.save();
-
-        res.status(201).json({
-            success: true,
-            ad: newAd
-        });
-
-    } catch (error) {
-        console.error('خطای ایجاد آگهی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ایجاد آگهی'
-        });
-    }
-});
-
-app.delete('/api/ads/:id', auth, async (req, res) => {
-    try {
-        const adId = parseInt(req.params.id);
-        const ad = await Ad.findOne({ id: adId });
-
-        if (!ad) {
-            return res.status(404).json({
-                success: false,
-                message: 'آگهی یافت نشد'
-            });
+        if (!sourceUser || !targetUser) {
+            return res.status(404).json({ msg: 'User not found.' });
+        }
+        if (targetUser.role !== 'sorting') {
+            return res.status(400).json({ msg: 'Connections can only be made to sorting centers.' });
         }
 
-        if ((ad.adType === 'supply' && ad.sellerId !== req.user.id) || 
-            (ad.adType === 'demand' && ad.buyerId !== req.user.id)) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز حذف این آگهی را ندارید'
-            });
-        }
-
-        await Promise.all([
-            Ad.findOneAndDelete({ id: adId }),
-            Message.deleteMany({ adId: adId })
-        ]);
-
-        res.json({
-            success: true,
-            message: 'آگهی و پیام‌های مرتبط با موفقیت حذف شدند'
-        });
-
-    } catch (error) {
-        console.error('خطای حذف آگهی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف آگهی'
-        });
-    }
-});
-
-// === پیام‌ها ===
-app.get('/api/messages', auth, async (req, res) => {
-    try {
-        const userMessages = await Message.find({
-            $or: [
-                { senderId: req.user.id },
-                { recipientId: req.user.id }
-            ]
-        });
-
-        res.json({
-            success: true,
-            messages: userMessages.map(msg => ({
-                id: msg.id,
-                adId: msg.adId,
-                senderId: msg.senderId,
-                senderName: msg.senderName,
-                recipientId: msg.recipientId,
-                recipientName: msg.recipientName,
-                content: msg.content,
-                image: msg.image,
-                read: msg.read,
-                createdAt: msg.createdAt
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت پیام‌ها:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت پیام‌ها'
-        });
-    }
-});
-
-app.post('/api/messages', auth, async (req, res) => {
-    try {
-        const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
-
-        const newMessage = new Message({
-            id: await getNextSequence('message'),
-            adId: parseInt(adId),
-            senderId,
-            senderName,
-            recipientId,
-            recipientName,
-            content,
-            image: image || null
-        });
-
-        await newMessage.save();
-
-        res.status(201).json({
-            success: true,
-            message: newMessage
-        });
-
-    } catch (error) {
-        console.error('خطای ایجاد پیام:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ایجاد پیام'
-        });
-    }
-});
-
-app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res) => {
-    try {
-        const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-').map(Number);
-
-        await Message.updateMany(
-            {
-                recipientId: req.user.id,
-                senderId: { $in: [user1Id, user2Id] },
-                read: false
-            },
-            { $set: { read: true } }
-        );
-
-        res.json({
-            success: true,
-            message: 'مکالمه به عنوان خوانده شده علامت گذاری شد'
-        });
-
-    } catch (error) {
-        console.error('خطای علامت گذاری مکالمه:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در علامت گذاری مکالمه'
-        });
-    }
-});
-
-app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) => {
-    try {
-        const conversationId = req.params.conversationId;
-        const [user1Id, user2Id] = conversationId.split('-').map(Number);
-
-        const result = await Message.deleteMany({
-            $or: [
-                { senderId: user1Id, recipientId: user2Id },
-                { senderId: user2Id, recipientId: user1Id }
-            ]
-        });
-
-        res.json({
-            success: true,
-            message: `${result.deletedCount} پیام حذف شد`
-        });
-
-    } catch (error) {
-        console.error('خطای حذف مکالمه:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف مکالمه'
-        });
-    }
-});
-
-// === اتصالات ===
-app.get('/api/connections', auth, async (req, res) => {
-    try {
-        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
-        
-        const connections = await Connection.find();
-        
-        console.log('✅ اتصالات یافت شده:', connections.length);
-        
-        res.json({
-            success: true,
-            connections
-        });
-    } catch (error) {
-        console.error('❌ خطای GET /api/connections:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت اتصالات'
-        });
-    }
-});
-
-app.post('/api/connections', auth, async (req, res) => {
-    try {
-        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
-
-        let { targetId } = req.body;
-
-        // استخراج targetId از object اگر لازم باشد
-        if (targetId && typeof targetId === 'object' && targetId.targetId) {
-            console.log('🔧 استخراج targetId از object...');
-            targetId = targetId.targetId;
-        }
-
-        if (!targetId && targetId !== 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'شناسه مقصد الزامی است'
-            });
-        }
-
-        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
-
-        const sourceUser = await User.findOne({ id: req.user.id });
-        if (!sourceUser) {
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر مبدأ یافت نشد'
-            });
-        }
-
-        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
-
-        // **منطق اصلاح شده: استفاده از targetId ارسال شده**
-        const targetUser = await User.findOne({ id: parseInt(targetId), role: 'sorting' });
-
-        if (!targetUser) {
-            console.error(`❌ مرکز سورتینگی با id: ${targetId} یافت نشد.`);
-            return res.status(404).json({
-                success: false,
-                message: 'مرکز سورتینگ انتخاب شده معتبر نیست یا یافت نشد.'
-            });
-        }
-        
-        console.log('✅ اتصال به مرکز سورتینگ:', targetUser.fullname, '- id:', targetUser.id);
-
-        // بررسی اتصال تکراری
-        const existingConnection = await Connection.findOne({
-            sourceId: req.user.id,
-            targetId: parseInt(targetId)
-        });
-
+        // Check for existing connection
+        const existingConnection = await Connection.findOne({ sourceId, targetId });
         if (existingConnection) {
-            console.log('⚠️ اتصال تکراری');
-            return res.status(400).json({
-                success: false,
-                message: 'قبلاً به این مرکز سورتینگ متصل شده‌اید'
-            });
+            return res.status(400).json({ msg: 'Connection request already exists.' });
         }
 
-        // ایجاد اتصال جدید
-        const connectionData = {
-            id: await getNextSequence('connection'),
-            sourceId: req.user.id,
+        const newConnection = new Connection({
+            sourceId,
+            targetId,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
             sourcePhone: sourceUser.phone,
-            targetId: targetUser.id,
-            status: 'pending'
-        };
+            sourceLicensePlate: sourceUser.licensePlate,
+            sourceAddress: sourceUser.address,
+        });
 
-        // اضافه کردن اطلاعات اضافی
-        if (sourceUser.role === 'driver' && sourceUser.licensePlate) {
-            connectionData.sourceLicensePlate = sourceUser.licensePlate;
-        } else if (sourceUser.role === 'greenhouse' && sourceUser.address) {
-            connectionData.sourceAddress = sourceUser.address;
-        }
-
-        console.log('📝 ایجاد اتصال...');
-
-        const newConnection = new Connection(connectionData);
         await newConnection.save();
+        res.json({ success: true, msg: 'Connection request sent.', connection: newConnection });
 
-        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
-
-        res.status(201).json({
-            success: true,
-            connection: newConnection,
-            message: 'درخواست اتصال با موفقیت ارسال شد'
-        });
-
-    } catch (error) {
-        console.error('💥 خطا در ایجاد اتصال:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور: ' + error.message
-        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.put('/api/connections/:id', auth, async (req, res) => {
-    try {
-        const connectionId = parseInt(req.params.id);
-        const { status, suspended } = req.body;
+// --- 3. Update a connection (approve/suspend) ---
+// Only the target (sorting center) can do this
+connectionRouter.put('/:id', auth, async (req, res) => {
+    const { status, suspended } = req.body;
+    const connectionId = req.params.id;
+    const userId = req.user.id;
 
+    try {
         const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
-            return res.status(404).json({
-                success: false,
-                message: 'اتصال یافت نشد'
-            });
+            return res.status(404).json({ msg: 'Connection not found.' });
         }
 
-        // رفع اشکال: تبدیل صریح req.user.id به عدد قبل از مقایسه برای جلوگیری از خطای نوع داده
-        if (connection.targetId !== parseInt(req.user.id)) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز بروزرسانی این اتصال را ندارید'
-            });
+        // Authorization check: only target can approve/suspend
+        if (connection.targetId !== userId) {
+            return res.status(403).json({ msg: 'User not authorized to update this connection.' });
         }
+
+        const updateFields = {};
+        if (status) updateFields.status = status;
+        if (typeof suspended !== 'undefined') updateFields.suspended = suspended;
 
         const updatedConnection = await Connection.findOneAndUpdate(
             { id: connectionId },
-            {
-                ...(status && { status }),
-                ...(suspended !== undefined && { suspended })
-            },
+            { $set: updateFields },
             { new: true }
         );
 
-        res.json({
-            success: true,
-            connection: updatedConnection
-        });
-
-    } catch (error) {
-        console.error('خطای بروزرسانی اتصال:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در بروزرسانی اتصال'
-        });
+        res.json({ success: true, msg: 'Connection updated.', connection: updatedConnection });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.delete('/api/connections/:id', auth, async (req, res) => {
-    try {
-        const connectionId = parseInt(req.params.id);
-        const connection = await Connection.findOne({ id: connectionId });
+// --- 4. Delete a connection ---
+// Either party can delete the connection
+connectionRouter.delete('/:id', auth, async (req, res) => {
+    const connectionId = req.params.id;
+    const userId = req.user.id;
 
+    try {
+        const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
-            return res.status(404).json({
-                success: false,
-                message: 'اتصال یافت نشد'
-            });
+            return res.status(404).json({ msg: 'Connection not found.' });
         }
 
-        if (connection.sourceId !== req.user.id && connection.targetId !== req.user.id) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز حذف این اتصال را ندارید'
-            });
+        // Authorization check: either source or target can delete
+        if (connection.sourceId !== userId && connection.targetId !== userId) {
+            return res.status(403).json({ msg: 'User not authorized to delete this connection.' });
         }
 
         await Connection.findOneAndDelete({ id: connectionId });
+        res.json({ success: true, msg: 'Connection deleted.' });
 
-        res.json({
-            success: true,
-            message: 'اتصال با موفقیت حذف شد'
-        });
-
-    } catch (error) {
-        console.error('خطای حذف اتصال:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف اتصال'
-        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === درخواست‌ها ===
-app.get('/api/requests', auth, async (req, res) => {
+app.use('/api/connections', auth, connectionRouter);
+
+// ----------------- Requests API Routes -----------------
+const requestRouter = express.Router();
+
+// --- 1. Get all requests relevant to the user ---
+requestRouter.get('/', auth, async (req, res) => {
     try {
-        const requests = await Request.find();
-        
-        res.json({
-            success: true,
-            requests: requests.map(req => ({
-                id: req.id,
-                greenhouseId: req.greenhouseId,
-                greenhouseName: req.greenhouseName,
-                greenhousePhone: req.greenhousePhone,
-                greenhouseAddress: req.greenhouseAddress,
-                sortingCenterId: req.sortingCenterId,
-                sortingCenterName: req.sortingCenterName,
-                driverId: req.driverId,
-                driverName: req.driverName,
-                driverPhone: req.driverPhone,
-                driverLicensePlate: req.driverLicensePlate,
-                type: req.type,
-                quantity: req.quantity,
-                description: req.description,
-                location: req.location,
-                status: req.status,
-                isPickupConfirmed: req.isPickupConfirmed,
-                isConsolidated: req.isConsolidated,
-                rejectionReason: req.rejectionReason,
-                assignedAt: req.assignedAt,
-                acceptedAt: req.acceptedAt,
-                completedAt: req.completedAt,
-                createdAt: req.createdAt
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت درخواست‌ها:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت درخواست‌ها'
-        });
+        const user = await User.findOne({ id: req.user.id });
+        let query = {};
+        switch (user.role) {
+            case 'greenhouse':
+                query = { greenhouseId: user.id };
+                break;
+            case 'sorting':
+                query = { sortingCenterId: user.id };
+                break;
+            case 'driver':
+                query = { driverId: user.id };
+                break;
+            default:
+                // Other roles might not see any requests by default
+                return res.json({ success: true, requests: [] });
+        }
+        const requests = await Request.find(query).sort({ createdAt: -1 });
+        res.json({ success: true, requests });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.post('/api/requests', auth, async (req, res) => {
+// --- 2. Create a new request (by greenhouse) ---
+requestRouter.post('/', auth, async (req, res) => {
+    const { sortingCenterId, type, quantity, description } = req.body;
+    const greenhouseId = req.user.id;
+
     try {
-        const { greenhouseId, greenhouseName, greenhousePhone, greenhouseAddress, sortingCenterId, sortingCenterName, type, quantity, description, location } = req.body;
+        const greenhouse = await User.findOne({ id: greenhouseId });
+        if (greenhouse.role !== 'greenhouse') {
+            return res.status(403).json({ msg: 'Only greenhouses can create requests.' });
+        }
+        const sortingCenter = await User.findOne({ id: sortingCenterId });
 
         const newRequest = new Request({
-            id: await getNextSequence('request'),
             greenhouseId,
-            greenhouseName,
-            greenhousePhone,
-            greenhouseAddress,
+            greenhouseName: greenhouse.fullname,
+            greenhousePhone: greenhouse.phone,
+            greenhouseAddress: greenhouse.address,
+            location: greenhouse.location,
             sortingCenterId,
-            sortingCenterName,
+            sortingCenterName: sortingCenter.fullname,
             type,
-            quantity: parseInt(quantity),
-            description: description || '',
-            location,
-            status: 'pending'
+            quantity,
+            description
         });
 
         await newRequest.save();
-
-        res.status(201).json({
-            success: true,
-            request: newRequest
-        });
-
-    } catch (error) {
-        console.error('خطای ایجاد درخواست:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در ایجاد درخواست'
-        });
+        res.json({ success: true, msg: 'Request created successfully.', request: newRequest });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.put('/api/requests/:id', auth, async (req, res) => {
+// --- 3. Update a request (multi-purpose) ---
+requestRouter.put('/:id', auth, async (req, res) => {
+    const requestId = req.params.id;
+    const userId = req.user.id;
+    const updates = req.body;
+
     try {
-        const requestId = parseInt(req.params.id);
-        
+        const request = await Request.findOne({ id: requestId });
+        if (!request) {
+            return res.status(404).json({ msg: 'Request not found' });
+        }
+
+        // --- Authorization ---
+        const user = await User.findOne({ id: userId });
+        const isGreenhouse = request.greenhouseId === userId;
+        const isSorting = request.sortingCenterId === userId;
+        const isDriver = request.driverId === userId;
+        let canUpdate = false;
+
+        if (user.role === 'sorting' && isSorting) canUpdate = true;
+        if (user.role === 'driver' && isDriver) canUpdate = true;
+        if (user.role === 'greenhouse' && isGreenhouse) canUpdate = true;
+
+        if (!canUpdate) {
+            return res.status(403).json({ msg: 'User not authorized for this request.' });
+        }
+        // --- End Authorization ---
+
+        // Logic for driver capacity update when accepting a mission
+        if (updates.status === 'in_progress' && user.role === 'driver') {
+            const driver = await User.findOne({ id: userId });
+            if (request.type === 'empty') {
+                driver.emptyBaskets -= request.quantity;
+            } else if (request.type === 'full') {
+                driver.loadCapacity -= request.quantity;
+            }
+            await driver.save();
+            updates.acceptedAt = Date.now();
+        }
+
+        // Logic for completing a mission
+        if (updates.status === 'completed') {
+            updates.completedAt = Date.now();
+             // If it's a 'full' request, reset driver capacity
+            if (request.type === 'full' && request.driverId) {
+                const driver = await User.findOne({ id: request.driverId });
+                if (driver) {
+                    // Capacity is now free, but the load is still there until consolidated
+                    driver.loadCapacity += request.quantity;
+                    await driver.save();
+                }
+            }
+        }
+
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
-            req.body,
+            { $set: updates },
             { new: true }
         );
 
-        if (!updatedRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
-        }
-
-        res.json({
-            success: true,
-            request: updatedRequest
-        });
-
-    } catch (error) {
-        console.error('خطای بروزرسانی درخواست:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در بروزرسانی درخواست'
-        });
+        res.json({ success: true, msg: 'Request updated', request: updatedRequest });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-app.delete('/api/requests/:id', auth, async (req, res) => {
-    try {
-        const requestId = parseInt(req.params.id);
-        const request = await Request.findOne({ id: requestId });
 
+// --- 4. Delete a request (by greenhouse or sorting center) ---
+requestRouter.delete('/:id', auth, async (req, res) => {
+    const requestId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        const request = await Request.findOne({ id: requestId });
         if (!request) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
+            return res.status(404).json({ msg: 'Request not found.' });
         }
 
-        if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
-            return res.status(403).json({
-                success: false,
-                message: 'مجوز حذف این درخواست را ندارید'
-            });
+        // Authorization: only creator (greenhouse) or target (sorting) can delete if pending
+        if (request.status !== 'pending') {
+            return res.status(400).json({ msg: 'Cannot delete a request that is in progress.' });
+        }
+        if (request.greenhouseId !== userId && request.sortingCenterId !== userId) {
+            return res.status(403).json({ msg: 'User not authorized to delete this request.' });
         }
 
         await Request.findOneAndDelete({ id: requestId });
-
-        res.json({
-            success: true,
-            message: 'درخواست با موفقیت حذف شد'
-        });
-
-    } catch (error) {
-        console.error('خطای حذف درخواست:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در حذف درخواست'
-        });
+        res.json({ success: true, msg: 'Request deleted.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === مسیرهای مرکز سورتینگ ===
-app.get('/api/sorting/connection-requests', auth, async (req, res) => {
+// --- 5. Consolidate missions for delivery (by driver) ---
+requestRouter.post('/consolidate', auth, async (req, res) => {
+    const { missionIds } = req.body;
+    const driverId = req.user.id;
+    
     try {
-        if (req.user.role !== 'sorting') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
-            });
+        const driver = await User.findOne({ id: driverId });
+        if (driver.role !== 'driver') {
+            return res.status(403).json({ msg: 'Only drivers can consolidate missions.' });
         }
 
-        const pendingConnections = await Connection.find({
-            targetId: req.user.id,
-            status: 'pending'
-        });
-
-        res.json({
-            success: true,
-            connectionRequests: pendingConnections
-        });
-    } catch (error) {
-        console.error('خطای دریافت درخواست‌های اتصال سورتینگ:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت درخواست‌های اتصال'
-        });
-    }
-});
-
-app.get('/api/sorting/approved-connections', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'sorting') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const approvedConnections = await Connection.find({
-            targetId: req.user.id,
-            status: 'approved'
-        });
-
-        res.json({
-            success: true,
-            approvedConnections
-        });
-    } catch (error) {
-        console.error('خطای دریافت اتصالات تأیید شده:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت اتصالات تأیید شده'
-        });
-    }
-});
-
-app.get('/api/sorting/transport-requests', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'sorting') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط مراکز سورتینگ می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const transportRequests = await Request.find({
-            sortingCenterId: req.user.id,
-            status: 'pending'
-        });
-
-        res.json({
-            success: true,
-            transportRequests
-        });
-    } catch (error) {
-        console.error('خطای دریافت درخواست‌های حمل و نقل:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت درخواست‌های حمل و نقل'
-        });
-    }
-});
-
-// === مسیرهای گلخانه ===
-app.get('/api/greenhouse/sorting-centers', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'greenhouse') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط گلخانه‌ها می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const sortingCenters = await User.find({ role: 'sorting' });
-        
-        res.json({
-            success: true,
-            sortingCenters: sortingCenters.map(sc => ({
-                id: sc.id,
-                fullname: sc.fullname,
-                province: sc.province,
-                phone: sc.phone,
-                address: sc.address,
-                location: sc.location
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت مراکز سورتینگ:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت مراکز سورتینگ'
-        });
-    }
-});
-
-app.get('/api/greenhouse/connections', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'greenhouse') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط گلخانه‌ها می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const greenhouseConnections = await Connection.find({
-            sourceId: req.user.id,
-            sourceRole: 'greenhouse'
-        });
-
-        res.json({
-            success: true,
-            connections: greenhouseConnections
-        });
-    } catch (error) {
-        console.error('خطای دریافت اتصالات گلخانه:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت اتصالات گلخانه'
-        });
-    }
-});
-
-// === مسیرهای راننده ===
-app.get('/api/driver/sorting-centers', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'driver') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط رانندگان می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const sortingCenters = await User.find({ role: 'sorting' });
-        
-        res.json({
-            success: true,
-            sortingCenters: sortingCenters.map(sc => ({
-                id: sc.id,
-                fullname: sc.fullname,
-                province: sc.province,
-                phone: sc.phone,
-                address: sc.address,
-                location: sc.location
-            }))
-        });
-    } catch (error) {
-        console.error('خطای دریافت مراکز سورتینگ راننده:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت مراکز سورتینگ'
-        });
-    }
-});
-
-app.get('/api/driver/connections', auth, async (req, res) => {
-    try {
-        if (req.user.role !== 'driver') {
-            return res.status(403).json({
-                success: false,
-                message: 'فقط رانندگان می‌توانند به این مسیر دسترسی داشته باشند'
-            });
-        }
-
-        const driverConnections = await Connection.find({
-            sourceId: req.user.id,
-            sourceRole: 'driver'
-        });
-
-        res.json({
-            success: true,
-            connections: driverConnections
-        });
-    } catch (error) {
-        console.error('خطای دریافت اتصالات راننده:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در دریافت اتصالات راننده'
-        });
-    }
-});
-
-// تحویل تجمیعی
-app.post('/api/requests/consolidate', auth, async (req, res) => {
-    try {
-        const { missionIds } = req.body;
-        const driver = await User.findOne({ id: req.user.id });
-        
-        if (!driver) {
-            return res.status(404).json({
-                success: false,
-                message: 'راننده یافت نشد'
-            });
-        }
-
-        const connection = await Connection.findOne({ 
-            sourceId: req.user.id, 
-            status: 'approved' 
-        });
-        const sortingCenter = connection ? await User.findOne({ id: connection.targetId }) : null;
-
-        if (!sortingCenter) {
-            return res.status(400).json({
-                success: false,
-                message: 'هیچ مرکز سورتینگ متصلی وجود ندارد'
-            });
-        }
-
-        const newRequest = new Request({
-            id: await getNextSequence('request'),
-            type: 'delivered_basket',
-            status: 'in_progress_to_sorting',
-            driverId: req.user.id,
-            driverName: driver.fullname,
-            sortingCenterId: sortingCenter.id,
-            sortingCenterName: sortingCenter.fullname,
-            quantity: missionIds.length,
-            description: 'تحویل مرکزی بارهای تکمیل شده',
-            location: sortingCenter.location
-        });
-
-        await newRequest.save();
-
+        // Update original missions
         await Request.updateMany(
-            { id: { $in: missionIds } },
+            { id: { $in: missionIds }, driverId: driverId, status: 'completed', type: 'full' },
             { $set: { isConsolidated: true } }
         );
 
-        res.status(201).json({
-            success: true,
-            request: newRequest
-        });
+        const missions = await Request.find({ id: { $in: missionIds } });
+        const totalQuantity = missions.reduce((sum, m) => sum + m.quantity, 0);
+        const sortingCenterId = missions[0].sortingCenterId;
+        const sortingCenter = await User.findOne({ id: sortingCenterId });
 
-    } catch (error) {
-        console.error('خطای تحویل تجمیعی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در تحویل تجمیعی'
+        // Create new delivery request
+        const deliveryRequest = new Request({
+            type: 'delivered_basket',
+            status: 'in_progress_to_sorting',
+            driverId,
+            driverName: driver.fullname,
+            sortingCenterId,
+            sortingCenterName: sortingCenter.fullname,
+            quantity: totalQuantity,
+            description: `Consolidated delivery of ${missions.length} missions.`,
+            location: sortingCenter.location, // Destination is the sorting center
+            createdAt: Date.now()
         });
+        
+        await deliveryRequest.save();
+
+        res.json({ success: true, msg: 'Delivery mission created.', request: deliveryRequest });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// رد تحویل تجمیعی
-app.post('/api/requests/:id/reject', auth, async (req, res) => {
-    try {
-        const requestId = parseInt(req.params.id);
-        const { reason } = req.body;
+// --- 6. Reject a consolidated delivery (by sorting center) ---
+requestRouter.post('/:id/reject', auth, async (req, res) => {
+    const deliveryRequestId = req.params.id;
+    const { reason } = req.body;
+    const sortingId = req.user.id;
 
-        const updatedRequest = await Request.findOneAndUpdate(
-            { id: requestId },
-            {
-                status: 'rejected',
-                rejectionReason: reason,
-                completedAt: new Date()
-            },
-            { new: true }
+    try {
+        const deliveryRequest = await Request.findOne({ id: deliveryRequestId });
+        if (!deliveryRequest || deliveryRequest.type !== 'delivered_basket' || deliveryRequest.sortingCenterId !== sortingId) {
+            return res.status(403).json({ msg: 'Not authorized or invalid request.' });
+        }
+
+        // Update the delivery request itself
+        deliveryRequest.status = 'rejected';
+        deliveryRequest.rejectionReason = reason;
+        await deliveryRequest.save();
+
+        // Find and revert the original missions
+        // This is a simplification; a real app might store the consolidated IDs in the delivery request.
+        // For now, we assume we can find them based on the driver and consolidation status.
+        await Request.updateMany(
+            { driverId: deliveryRequest.driverId, isConsolidated: true, sortingCenterId: sortingId },
+            { $set: { isConsolidated: false } }
         );
 
-        if (!updatedRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
-        }
-
-        res.json({
-            success: true,
-            request: updatedRequest
-        });
-
-    } catch (error) {
-        console.error('خطای رد تحویل:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در رد تحویل'
-        });
+        res.json({ success: true, msg: 'Delivery rejected and missions reverted.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// بازنشانی رمز عبور
-app.post('/api/users/reset-password', async (req, res) => {
+
+app.use('/api/requests', auth, requestRouter);
+
+// ----------------- Ads (Marketplace) API Routes -----------------
+const adRouter = express.Router();
+
+// --- 1. Get all ads (publicly accessible) ---
+adRouter.get('/', async (req, res) => {
     try {
-        const { phone, newPassword } = req.body;
-        const user = await User.findOne({ phone });
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'کاربر یافت نشد'
-            });
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(newPassword, salt);
-        await user.save();
-
-        res.json({
-            success: true,
-            message: 'رمز عبور با موفقیت بازنشانی شد'
-        });
-
-    } catch (error) {
-        console.error('خطای بازنشانی رمز عبور:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در بازنشانی رمز عبور'
-        });
+        const ads = await Ad.find().sort({ createdAt: -1 });
+        res.json({ success: true, ads });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === مسیرهای دیباگ ===
-app.get('/api/debug/system', auth, async (req, res) => {
+// --- 2. Create a new ad ---
+adRouter.post('/', auth, async (req, res) => {
+    const { adType, product, category, quantity, price, emoji, image } = req.body;
+    const userId = req.user.id;
+
     try {
-        console.log('🔧 درخواست دیباگ سیستم از کاربر:', req.user.id);
+        const user = await User.findOne({ id: userId });
+        const adData = {
+            adType, product, category, quantity, price, emoji, image,
+        };
 
-        const currentUser = await User.findOne({ id: req.user.id });
-        const allUsers = await User.find({}, 'fullname role phone');
-        const allConnections = await Connection.find();
+        if (adType === 'supply') {
+            adData.sellerId = userId;
+            adData.seller = user.fullname;
+        } else { // demand
+            adData.buyerId = userId;
+            adData.buyer = user.fullname;
+        }
 
-        const userConnections = await Connection.find({
-            $or: [
-                { sourceId: req.user.id },
-                { targetId: req.user.id }
-            ]
-        });
-
-        res.json({
-            success: true,
-            debug: {
-                currentUser: {
-                    id: currentUser?.id,
-                    fullname: currentUser?.fullname,
-                    role: currentUser?.role,
-                    phone: currentUser?.phone
-                },
-                users: {
-                    total: allUsers.length,
-                    list: allUsers
-                },
-                connections: {
-                    total: allConnections.length,
-                    userConnections: userConnections.length,
-                    all: allConnections,
-                    user: userConnections
-                },
-                database: {
-                    status: mongoose.connection.readyState === 1 ? 'متصل' : 'قطع',
-                    name: mongoose.connection.name
-                }
-            }
-        });
-    } catch (error) {
-        console.error('❌ خطای دیباگ سیستم:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای دیباگ: ' + error.message
-        });
+        const newAd = new Ad(adData);
+        await newAd.save();
+        res.json({ success: true, msg: 'Ad created successfully', ad: newAd });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === آپدیت ID کاربران موجود ===
-app.post('/api/debug/update-user-ids', async (req, res) => {
+// --- 3. Delete an ad ---
+adRouter.delete('/:id', auth, async (req, res) => {
+    const adId = req.params.id;
+    const userId = req.user.id;
+
     try {
-        const users = await User.find({ id: { $exists: false } });
-        let counter = 1;
-
-        // پیدا کردن بیشترین id موجود
-        const lastUser = await User.findOne().sort({ id: -1 });
-        if (lastUser && lastUser.id) {
-            counter = lastUser.id + 1;
+        const ad = await Ad.findOne({ id: adId });
+        if (!ad) {
+            return res.status(404).json({ msg: 'Ad not found.' });
         }
 
-        console.log(`🔄 شروع بروزرسانی ${users.length} کاربر...`);
-
-        for (const user of users) {
-            user.id = counter;
-            await user.save();
-            console.log(`✅ بروزرسانی کاربر ${user.fullname} با id: ${counter}`);
-            counter++;
+        // Authorization: only the creator can delete
+        if (ad.sellerId !== userId && ad.buyerId !== userId) {
+            return res.status(403).json({ msg: 'User not authorized to delete this ad.' });
         }
+        
+        // Also delete associated messages
+        const conversationIdsToDelete = await Message.distinct('conversationId', { adId: ad.id });
+        if (conversationIdsToDelete.length > 0) {
+            await Message.deleteMany({ conversationId: { $in: conversationIdsToDelete } });
+        }
+        
+        await Ad.findOneAndDelete({ id: adId });
 
-        res.json({
-            success: true,
-            message: `${users.length} کاربر بروزرسانی شدند`,
-            updatedCount: users.length
-        });
-    } catch (error) {
-        console.error('❌ خطا در بروزرسانی:', error);
-        res.status(500).json({
-            success: false,
-            message: error.message
-        });
+        res.json({ success: true, msg: 'Ad and associated messages deleted.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
     }
 });
 
-// === مسیر پیش‌فرض ===
-app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Note: Ads are public, so GET doesn't need auth middleware on the whole router
+app.use('/api/ads', adRouter);
+
+
+// ----------------- Messages (Chat) API Routes -----------------
+const messageRouter = express.Router();
+
+// --- 1. Get all messages for the logged-in user ---
+messageRouter.get('/', auth, async (req, res) => {
+    try {
+        const messages = await Message.find({
+            $or: [{ senderId: req.user.id }, { recipientId: req.user.id }]
+        }).sort({ createdAt: -1 });
+        res.json({ success: true, messages });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
 });
 
-const PORT = process.env.PORT || 5000;
+// --- 2. Create a new message ---
+messageRouter.post('/', auth, async (req, res) => {
+    const { adId, recipientId, content, image } = req.body;
+    const senderId = req.user.id;
+
+    try {
+        const sender = await User.findOne({ id: senderId });
+        const recipient = await User.findOne({ id: recipientId });
+        if (!recipient) {
+            return res.status(404).json({ msg: 'Recipient not found.' });
+        }
+
+        const conversationId = [senderId, recipientId].sort().join('-');
+
+        const newMessage = new Message({
+            adId,
+            conversationId,
+            senderId,
+            senderName: sender.fullname,
+            recipientId,
+            recipientName: recipient.fullname,
+            content,
+            image
+        });
+
+        await newMessage.save();
+        res.json({ success: true, msg: 'Message sent.', message: newMessage });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// --- 3. Mark a conversation as read ---
+messageRouter.put('/conversation/:id/read', auth, async (req, res) => {
+    const conversationId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        await Message.updateMany(
+            { conversationId: conversationId, recipientId: userId, read: false },
+            { $set: { read: true } }
+        );
+        res.json({ success: true, msg: 'Conversation marked as read.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+// --- 4. Delete a conversation ---
+messageRouter.delete('/conversation/:id', auth, async (req, res) => {
+    const conversationId = req.params.id;
+    const userId = req.user.id;
+
+    try {
+        const message = await Message.findOne({ conversationId: conversationId });
+        if (message && (message.senderId === userId || message.recipientId === userId)) {
+            await Message.deleteMany({ conversationId: conversationId });
+            res.json({ success: true, msg: 'Conversation deleted.' });
+        } else {
+            res.status(403).json({ msg: 'Not authorized or conversation not found.' });
+        }
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+    }
+});
+
+
+app.use('/api/messages', auth, messageRouter);
+
+
+// ----------------- Start Server -----------------
 app.listen(PORT, () => {
-    console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
-    console.log(`✅ متصل به MongoDB`);
-    console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
-    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
+
+// Export models for use in other files
+module.exports = {
+    User,
+    Ad,
+    Connection,
+    Request,
+    Message,
+    Counter,
+    auth
+};
