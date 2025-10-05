@@ -721,7 +721,11 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
+        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
+        
         const connections = await Connection.find();
+        
+        console.log('✅ اتصالات یافت شده:', connections.length);
         
         res.json({
             success: true,
@@ -740,7 +744,7 @@ app.get('/api/connections', auth, async (req, res) => {
             }))
         });
     } catch (error) {
-        console.error('خطای دریافت اتصالات:', error);
+        console.error('❌ خطای GET /api/connections:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت اتصالات'
@@ -750,14 +754,24 @@ app.get('/api/connections', auth, async (req, res) => {
 
 app.post('/api/connections', auth, async (req, res) => {
     try {
-        const { targetId } = req.body;
+        console.log('📡 درخواست POST /api/connections - داده:', JSON.stringify(req.body, null, 2));
 
-        if (!targetId) {
+        let { targetId } = req.body;
+
+        // استخراج targetId از object اگر لازم باشد
+        if (targetId && typeof targetId === 'object' && targetId.targetId) {
+            console.log('🔧 استخراج targetId از object...');
+            targetId = targetId.targetId;
+        }
+
+        if (!targetId && targetId !== 0) {
             return res.status(400).json({
                 success: false,
                 message: 'شناسه مقصد الزامی است'
             });
         }
+
+        console.log('🎯 targetId نهایی:', targetId, 'نوع:', typeof targetId);
 
         const sourceUser = await User.findOne({ id: req.user.id });
         if (!sourceUser) {
@@ -767,13 +781,20 @@ app.post('/api/connections', auth, async (req, res) => {
             });
         }
 
+        console.log('✅ کاربر مبدأ:', sourceUser.fullname, '- نقش:', sourceUser.role);
+
+        // **منطق اصلاح شده: استفاده از targetId ارسال شده**
         const targetUser = await User.findOne({ id: parseInt(targetId) });
+
         if (!targetUser) {
+            console.error(`❌ کاربری با id: ${targetId} یافت نشد.`);
             return res.status(404).json({
                 success: false,
-                message: 'کاربر مقصد یافت نشد'
+                message: 'کاربر انتخاب شده معتبر نیست یا یافت نشد.'
             });
         }
+        
+        console.log('✅ اتصال به کاربر:', targetUser.fullname, '- id:', targetUser.id, '- نقش:', targetUser.role);
 
         // بررسی اتصال تکراری
         const existingConnection = await Connection.findOne({
@@ -782,6 +803,7 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
         if (existingConnection) {
+            console.log('⚠️ اتصال تکراری');
             return res.status(400).json({
                 success: false,
                 message: 'قبلاً به این کاربر متصل شده‌اید'
@@ -806,8 +828,12 @@ app.post('/api/connections', auth, async (req, res) => {
             connectionData.sourceAddress = sourceUser.address;
         }
 
+        console.log('📝 ایجاد اتصال...');
+
         const newConnection = new Connection(connectionData);
         await newConnection.save();
+
+        console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
         res.status(201).json({
             success: true,
@@ -816,10 +842,94 @@ app.post('/api/connections', auth, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('خطای ایجاد اتصال:', error);
+        console.error('💥 خطا در ایجاد اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در ایجاد اتصال'
+            message: 'خطای سرور: ' + error.message
+        });
+    }
+});
+
+// 🔧 **ENDPOINT جدید برای تأیید اتصال**
+app.put('/api/connections/:id/approve', auth, async (req, res) => {
+    try {
+        const connectionId = parseInt(req.params.id);
+        console.log('📡 درخواست تأیید اتصال:', connectionId, '- کاربر:', req.user.id);
+
+        const connection = await Connection.findOne({ id: connectionId });
+        if (!connection) {
+            return res.status(404).json({
+                success: false,
+                message: 'اتصال یافت نشد'
+            });
+        }
+
+        // بررسی اینکه کاربر فعلی مرکز سورتینگ است و اتصال برای اوست
+        if (connection.targetId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط مرکز سورتینگ می‌تواند اتصال را تأیید کند'
+            });
+        }
+
+        const updatedConnection = await Connection.findOneAndUpdate(
+            { id: connectionId },
+            { status: 'approved' },
+            { new: true }
+        );
+
+        console.log('✅ اتصال تأیید شد:', updatedConnection.id);
+
+        res.json({
+            success: true,
+            connection: updatedConnection,
+            message: 'اتصال با موفقیت تأیید شد'
+        });
+
+    } catch (error) {
+        console.error('❌ خطای تأیید اتصال:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در تأیید اتصال'
+        });
+    }
+});
+
+// 🔧 **ENDPOINT جدید برای رد اتصال**
+app.put('/api/connections/:id/reject', auth, async (req, res) => {
+    try {
+        const connectionId = parseInt(req.params.id);
+        console.log('📡 درخواست رد اتصال:', connectionId, '- کاربر:', req.user.id);
+
+        const connection = await Connection.findOne({ id: connectionId });
+        if (!connection) {
+            return res.status(404).json({
+                success: false,
+                message: 'اتصال یافت نشد'
+            });
+        }
+
+        if (connection.targetId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'فقط مرکز سورتینگ می‌تواند اتصال را رد کند'
+            });
+        }
+
+        await Connection.findOneAndDelete({ id: connectionId });
+
+        console.log('✅ اتصال رد شد:', connectionId);
+
+        res.json({
+            success: true,
+            message: 'اتصال با موفقیت رد شد'
+        });
+
+    } catch (error) {
+        console.error('❌ خطای رد اتصال:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در رد اتصال'
         });
     }
 });
@@ -1467,4 +1577,5 @@ app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
+    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
 });
