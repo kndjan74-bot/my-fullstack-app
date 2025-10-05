@@ -721,22 +721,18 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
 // === اتصالات ===
 app.get('/api/connections', auth, async (req, res) => {
     try {
-        const userId = req.user.id;
-        console.log(`📡 درخواست GET /api/connections برای کاربر: ${userId}`);
-
-        // فقط اتصالاتی را برمی‌گرداند که کاربر فعلی در آن نقش دارد
-        const userConnections = await Connection.find({
-            $or: [{ sourceId: userId }, { targetId: userId }]
-        });
-
-        console.log(`✅ ${userConnections.length} اتصال مرتبط با کاربر ${userId} یافت شد.`);
-
+        console.log('📡 درخواست GET /api/connections - کاربر:', req.user.id);
+        
+        const connections = await Connection.find();
+        
+        console.log('✅ اتصالات یافت شده:', connections.length);
+        
         res.json({
             success: true,
-            connections: userConnections
+            connections
         });
     } catch (error) {
-        console.error(`❌ خطای GET /api/connections برای کاربر ${req.user.id}:`, error);
+        console.error('❌ خطای GET /api/connections:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت اتصالات'
@@ -846,22 +842,20 @@ app.put('/api/connections/:id', auth, async (req, res) => {
     try {
         const connectionId = parseInt(req.params.id);
         const { status, suspended } = req.body;
-        const userId = req.user.id;
-        const userRole = req.user.role;
 
         const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
-            return res.status(404).json({ success: false, message: 'اتصال یافت نشد' });
+            return res.status(404).json({
+                success: false,
+                message: 'اتصال یافت نشد'
+            });
         }
 
-        // بررسی مجوز: فقط مرکز سورتینگ مقصد می‌تواند اتصال را ویرایش کند
-        if (connection.targetId !== userId) {
-            return res.status(403).json({ success: false, message: 'شما مجوز بروزرسانی این اتصال را ندارید.' });
-        }
-
-        // بررسی امنیتی: فقط مرکز سورتینگ می‌تواند وضعیت را به "تایید شده" تغییر دهد
-        if (status === 'approved' && userRole !== 'sorting') {
-            return res.status(403).json({ success: false, message: 'فقط مراکز سورتینگ می‌توانند اتصال را تایید کنند.' });
+        if (connection.targetId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'مجوز بروزرسانی این اتصال را ندارید'
+            });
         }
 
         const updatedConnection = await Connection.findOneAndUpdate(
@@ -875,12 +869,11 @@ app.put('/api/connections/:id', auth, async (req, res) => {
 
         res.json({
             success: true,
-            connection: updatedConnection,
-            message: 'وضعیت اتصال با موفقیت بروزرسانی شد.'
+            connection: updatedConnection
         });
 
     } catch (error) {
-        console.error(`❌ خطای PUT /api/connections/${req.params.id}:`, error);
+        console.error('خطای بروزرسانی اتصال:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در بروزرسانی اتصال'
@@ -926,34 +919,38 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
 // === درخواست‌ها ===
 app.get('/api/requests', auth, async (req, res) => {
     try {
-        const userId = req.user.id;
-        const userRole = req.user.role;
-        console.log(`📡 درخواست GET /api/requests برای کاربر: ${userId} با نقش: ${userRole}`);
-
-        let query = {};
-        // بر اساس نقش کاربر، کوئری مناسب را برای فیلتر کردن درخواست‌ها تنظیم می‌کنیم
-        if (userRole === 'greenhouse') {
-            query = { greenhouseId: userId };
-        } else if (userRole === 'sorting') {
-            query = { sortingCenterId: userId };
-        } else if (userRole === 'driver') {
-            query = { driverId: userId };
-        } else {
-            // اگر کاربر نقش معتبری برای دیدن درخواست‌ها ندارد، لیست خالی برمی‌گردانیم
-            return res.json({ success: true, requests: [] });
-        }
-
-        const userRequests = await Request.find(query);
+        const requests = await Request.find();
         
-        console.log(`✅ ${userRequests.length} درخواست مرتبط با کاربر ${userId} یافت شد.`);
-
         res.json({
             success: true,
-            requests: userRequests // دیگر نیازی به map کردن نیست چون مدل کامل را می‌فرستیم
+            requests: requests.map(req => ({
+                id: req.id,
+                greenhouseId: req.greenhouseId,
+                greenhouseName: req.greenhouseName,
+                greenhousePhone: req.greenhousePhone,
+                greenhouseAddress: req.greenhouseAddress,
+                sortingCenterId: req.sortingCenterId,
+                sortingCenterName: req.sortingCenterName,
+                driverId: req.driverId,
+                driverName: req.driverName,
+                driverPhone: req.driverPhone,
+                driverLicensePlate: req.driverLicensePlate,
+                type: req.type,
+                quantity: req.quantity,
+                description: req.description,
+                location: req.location,
+                status: req.status,
+                isPickupConfirmed: req.isPickupConfirmed,
+                isConsolidated: req.isConsolidated,
+                rejectionReason: req.rejectionReason,
+                assignedAt: req.assignedAt,
+                acceptedAt: req.acceptedAt,
+                completedAt: req.completedAt,
+                createdAt: req.createdAt
+            }))
         });
-
     } catch (error) {
-        console.error(`❌ خطای GET /api/requests برای کاربر ${req.user.id}:`, error);
+        console.error('خطای دریافت درخواست‌ها:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در دریافت درخواست‌ها'
@@ -999,77 +996,27 @@ app.post('/api/requests', auth, async (req, res) => {
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
-        const userId = req.user.id;
-        const userRole = req.user.role;
-        const payload = req.body;
+        
+        const updatedRequest = await Request.findOneAndUpdate(
+            { id: requestId },
+            req.body,
+            { new: true }
+        );
 
-        const request = await Request.findOne({ id: requestId });
-        if (!request) {
-            return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
+        if (!updatedRequest) {
+            return res.status(404).json({
+                success: false,
+                message: 'درخواست یافت نشد'
+            });
         }
-
-        // --- سناریو ۱: تخصیص راننده توسط مرکز سورتینگ ---
-        if (payload.driverId && userRole === 'sorting') {
-            if (request.sortingCenterId !== userId) {
-                return res.status(403).json({ success: false, message: 'شما مجوز تخصیص راننده برای این درخواست را ندارید.' });
-            }
-            const driver = await User.findOne({ id: payload.driverId, role: 'driver' });
-            if (!driver) {
-                return res.status(404).json({ success: false, message: 'راننده مورد نظر یافت نشد.' });
-            }
-            
-            request.driverId = driver.id;
-            request.driverName = driver.fullname;
-            request.driverPhone = driver.phone;
-            request.driverLicensePlate = driver.licensePlate;
-            request.status = 'assigned';
-            request.assignedAt = new Date();
-        }
-        // --- سناریو ۲: پذیرش ماموریت توسط راننده ---
-        else if (payload.status === 'in_progress' && userRole === 'driver') {
-            if (request.driverId !== userId) {
-                return res.status(403).json({ success: false, message: 'این ماموریت به شما تخصیص داده نشده است.' });
-            }
-            
-            const driver = await User.findOne({ id: userId });
-            if (!driver) {
-                return res.status(404).json({ success: false, message: 'اطلاعات راننده یافت نشد.' });
-            }
-
-            // کسر ظرفیت بر اساس نوع ماموریت
-            if (request.type === 'full') { // راننده بار پر را از گلخانه می‌گیرد
-                if (driver.loadCapacity < request.quantity) {
-                    return res.status(400).json({ success: false, message: 'ظرفیت بار شما برای این ماموریت کافی نیست.' });
-                }
-                driver.loadCapacity -= request.quantity;
-            } else if (request.type === 'empty') { // راننده سبد خالی را به گلخانه می‌دهد
-                if (driver.emptyBaskets < request.quantity) {
-                    return res.status(400).json({ success: false, message: 'تعداد سبدهای خالی شما برای این ماموریت کافی نیست.' });
-                }
-                driver.emptyBaskets -= request.quantity;
-            }
-
-            await driver.save(); // ذخیره اطلاعات جدید راننده
-            request.status = 'in_progress';
-            request.acceptedAt = new Date();
-        }
-        // --- سناریو ۳: سایر بروزرسانی‌ها (مانند تکمیل ماموریت) ---
-        else {
-            // اینجا می‌توان منطق سایر تغییر وضعیت‌ها را اضافه کرد
-            // مثلا تایید تحویل توسط گلخانه یا مرکز سورتینگ
-            Object.assign(request, payload);
-        }
-
-        const updatedRequest = await request.save();
 
         res.json({
             success: true,
-            request: updatedRequest,
-            message: 'درخواست با موفقیت بروزرسانی شد.'
+            request: updatedRequest
         });
 
     } catch (error) {
-        console.error(`❌ خطای PUT /api/requests/${req.params.id}:`, error);
+        console.error('خطای بروزرسانی درخواست:', error);
         res.status(500).json({
             success: false,
             message: 'خطای سرور در بروزرسانی درخواست'
