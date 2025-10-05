@@ -18,6 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_default_jwt_secret_key_12345'
 // ----------------- Middleware -----------------
 app.use(cors());
 app.use(express.json({ limit: '5mb' })); // For parsing application/json and increasing payload limit for images
+app.use(express.static('public')); // Serve static files from the 'public' directory
 
 // ----------------- MongoDB Connection -----------------
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://liara:password@localhost:27017/soodcitydb';
@@ -424,7 +425,7 @@ app.use('/api/users', userRouter);
 const connectionRouter = express.Router();
 
 // --- 1. Get all connections relevant to the user ---
-connectionRouter.get('/', auth, async (req, res) => {
+connectionRouter.get('/', async (req, res) => {
     try {
         const userId = req.user.id;
         const connections = await Connection.find({
@@ -438,12 +439,12 @@ connectionRouter.get('/', auth, async (req, res) => {
 });
 
 // --- 2. Create a new connection request ---
-connectionRouter.post('/', auth, async (req, res) => {
-    const { targetId } = req.body;
+connectionRouter.post('/', async (req, res) => {
+    const targetId = parseInt(req.body.targetId, 10);
     const sourceId = req.user.id;
 
-    if (!targetId) {
-        return res.status(400).json({ msg: 'Target ID is required.' });
+    if (isNaN(targetId)) {
+        return res.status(400).json({ msg: 'Invalid Target ID.' });
     }
 
     try {
@@ -457,7 +458,6 @@ connectionRouter.post('/', auth, async (req, res) => {
             return res.status(400).json({ msg: 'Connections can only be made to sorting centers.' });
         }
 
-        // Check for existing connection
         const existingConnection = await Connection.findOne({ sourceId, targetId });
         if (existingConnection) {
             return res.status(400).json({ msg: 'Connection request already exists.' });
@@ -483,11 +483,14 @@ connectionRouter.post('/', auth, async (req, res) => {
 });
 
 // --- 3. Update a connection (approve/suspend) ---
-// Only the target (sorting center) can do this
-connectionRouter.put('/:id', auth, async (req, res) => {
+connectionRouter.put('/:id', async (req, res) => {
     const { status, suspended } = req.body;
-    const connectionId = req.params.id;
+    const connectionId = parseInt(req.params.id, 10);
     const userId = req.user.id;
+
+    if (isNaN(connectionId)) {
+        return res.status(400).json({ msg: 'Invalid Connection ID.' });
+    }
 
     try {
         const connection = await Connection.findOne({ id: connectionId });
@@ -495,7 +498,6 @@ connectionRouter.put('/:id', auth, async (req, res) => {
             return res.status(404).json({ msg: 'Connection not found.' });
         }
 
-        // Authorization check: only target can approve/suspend
         if (connection.targetId !== userId) {
             return res.status(403).json({ msg: 'User not authorized to update this connection.' });
         }
@@ -518,10 +520,13 @@ connectionRouter.put('/:id', auth, async (req, res) => {
 });
 
 // --- 4. Delete a connection ---
-// Either party can delete the connection
-connectionRouter.delete('/:id', auth, async (req, res) => {
-    const connectionId = req.params.id;
+connectionRouter.delete('/:id', async (req, res) => {
+    const connectionId = parseInt(req.params.id, 10);
     const userId = req.user.id;
+
+    if (isNaN(connectionId)) {
+        return res.status(400).json({ msg: 'Invalid Connection ID.' });
+    }
 
     try {
         const connection = await Connection.findOne({ id: connectionId });
@@ -529,7 +534,6 @@ connectionRouter.delete('/:id', auth, async (req, res) => {
             return res.status(404).json({ msg: 'Connection not found.' });
         }
 
-        // Authorization check: either source or target can delete
         if (connection.sourceId !== userId && connection.targetId !== userId) {
             return res.status(403).json({ msg: 'User not authorized to delete this connection.' });
         }
@@ -549,7 +553,7 @@ app.use('/api/connections', auth, connectionRouter);
 const requestRouter = express.Router();
 
 // --- 1. Get all requests relevant to the user ---
-requestRouter.get('/', auth, async (req, res) => {
+requestRouter.get('/', async (req, res) => {
     try {
         const user = await User.findOne({ id: req.user.id });
         let query = {};
@@ -564,7 +568,6 @@ requestRouter.get('/', auth, async (req, res) => {
                 query = { driverId: user.id };
                 break;
             default:
-                // Other roles might not see any requests by default
                 return res.json({ success: true, requests: [] });
         }
         const requests = await Request.find(query).sort({ createdAt: -1 });
@@ -576,9 +579,14 @@ requestRouter.get('/', auth, async (req, res) => {
 });
 
 // --- 2. Create a new request (by greenhouse) ---
-requestRouter.post('/', auth, async (req, res) => {
-    const { sortingCenterId, type, quantity, description } = req.body;
+requestRouter.post('/', async (req, res) => {
+    const { type, quantity, description } = req.body;
+    const sortingCenterId = parseInt(req.body.sortingCenterId, 10);
     const greenhouseId = req.user.id;
+
+    if (isNaN(sortingCenterId)) {
+        return res.status(400).json({ msg: 'Invalid Sorting Center ID.' });
+    }
 
     try {
         const greenhouse = await User.findOne({ id: greenhouseId });
@@ -586,6 +594,9 @@ requestRouter.post('/', auth, async (req, res) => {
             return res.status(403).json({ msg: 'Only greenhouses can create requests.' });
         }
         const sortingCenter = await User.findOne({ id: sortingCenterId });
+        if (!sortingCenter) {
+            return res.status(404).json({ msg: 'Sorting center not found.' });
+        }
 
         const newRequest = new Request({
             greenhouseId,
@@ -609,18 +620,21 @@ requestRouter.post('/', auth, async (req, res) => {
 });
 
 // --- 3. Update a request (multi-purpose) ---
-requestRouter.put('/:id', auth, async (req, res) => {
-    const requestId = req.params.id;
+requestRouter.put('/:id', async (req, res) => {
+    const requestId = parseInt(req.params.id, 10);
     const userId = req.user.id;
     const updates = req.body;
 
+    if (isNaN(requestId)) {
+        return res.status(400).json({ msg: 'Invalid Request ID.' });
+    }
+    
     try {
         const request = await Request.findOne({ id: requestId });
         if (!request) {
             return res.status(404).json({ msg: 'Request not found' });
         }
 
-        // --- Authorization ---
         const user = await User.findOne({ id: userId });
         const isGreenhouse = request.greenhouseId === userId;
         const isSorting = request.sortingCenterId === userId;
@@ -634,9 +648,7 @@ requestRouter.put('/:id', auth, async (req, res) => {
         if (!canUpdate) {
             return res.status(403).json({ msg: 'User not authorized for this request.' });
         }
-        // --- End Authorization ---
 
-        // Logic for driver capacity update when accepting a mission
         if (updates.status === 'in_progress' && user.role === 'driver') {
             const driver = await User.findOne({ id: userId });
             if (request.type === 'empty') {
@@ -648,14 +660,11 @@ requestRouter.put('/:id', auth, async (req, res) => {
             updates.acceptedAt = Date.now();
         }
 
-        // Logic for completing a mission
         if (updates.status === 'completed') {
             updates.completedAt = Date.now();
-             // If it's a 'full' request, reset driver capacity
             if (request.type === 'full' && request.driverId) {
                 const driver = await User.findOne({ id: request.driverId });
                 if (driver) {
-                    // Capacity is now free, but the load is still there until consolidated
                     driver.loadCapacity += request.quantity;
                     await driver.save();
                 }
@@ -677,9 +686,13 @@ requestRouter.put('/:id', auth, async (req, res) => {
 
 
 // --- 4. Delete a request (by greenhouse or sorting center) ---
-requestRouter.delete('/:id', auth, async (req, res) => {
-    const requestId = req.params.id;
+requestRouter.delete('/:id', async (req, res) => {
+    const requestId = parseInt(req.params.id, 10);
     const userId = req.user.id;
+
+    if (isNaN(requestId)) {
+        return res.status(400).json({ msg: 'Invalid Request ID.' });
+    }
 
     try {
         const request = await Request.findOne({ id: requestId });
@@ -687,7 +700,6 @@ requestRouter.delete('/:id', auth, async (req, res) => {
             return res.status(404).json({ msg: 'Request not found.' });
         }
 
-        // Authorization: only creator (greenhouse) or target (sorting) can delete if pending
         if (request.status !== 'pending') {
             return res.status(400).json({ msg: 'Cannot delete a request that is in progress.' });
         }
@@ -704,9 +716,13 @@ requestRouter.delete('/:id', auth, async (req, res) => {
 });
 
 // --- 5. Consolidate missions for delivery (by driver) ---
-requestRouter.post('/consolidate', auth, async (req, res) => {
-    const { missionIds } = req.body;
+requestRouter.post('/consolidate', async (req, res) => {
+    const missionIds = req.body.missionIds.map(id => parseInt(id, 10));
     const driverId = req.user.id;
+
+    if (missionIds.some(isNaN)) {
+        return res.status(400).json({ msg: 'Invalid Mission IDs provided.' });
+    }
     
     try {
         const driver = await User.findOne({ id: driverId });
@@ -714,7 +730,6 @@ requestRouter.post('/consolidate', auth, async (req, res) => {
             return res.status(403).json({ msg: 'Only drivers can consolidate missions.' });
         }
 
-        // Update original missions
         await Request.updateMany(
             { id: { $in: missionIds }, driverId: driverId, status: 'completed', type: 'full' },
             { $set: { isConsolidated: true } }
@@ -725,7 +740,6 @@ requestRouter.post('/consolidate', auth, async (req, res) => {
         const sortingCenterId = missions[0].sortingCenterId;
         const sortingCenter = await User.findOne({ id: sortingCenterId });
 
-        // Create new delivery request
         const deliveryRequest = new Request({
             type: 'delivered_basket',
             status: 'in_progress_to_sorting',
@@ -735,7 +749,7 @@ requestRouter.post('/consolidate', auth, async (req, res) => {
             sortingCenterName: sortingCenter.fullname,
             quantity: totalQuantity,
             description: `Consolidated delivery of ${missions.length} missions.`,
-            location: sortingCenter.location, // Destination is the sorting center
+            location: sortingCenter.location,
             createdAt: Date.now()
         });
         
@@ -749,10 +763,14 @@ requestRouter.post('/consolidate', auth, async (req, res) => {
 });
 
 // --- 6. Reject a consolidated delivery (by sorting center) ---
-requestRouter.post('/:id/reject', auth, async (req, res) => {
-    const deliveryRequestId = req.params.id;
+requestRouter.post('/:id/reject', async (req, res) => {
+    const deliveryRequestId = parseInt(req.params.id, 10);
     const { reason } = req.body;
     const sortingId = req.user.id;
+
+    if (isNaN(deliveryRequestId)) {
+        return res.status(400).json({ msg: 'Invalid Delivery Request ID.' });
+    }
 
     try {
         const deliveryRequest = await Request.findOne({ id: deliveryRequestId });
@@ -760,14 +778,10 @@ requestRouter.post('/:id/reject', auth, async (req, res) => {
             return res.status(403).json({ msg: 'Not authorized or invalid request.' });
         }
 
-        // Update the delivery request itself
         deliveryRequest.status = 'rejected';
         deliveryRequest.rejectionReason = reason;
         await deliveryRequest.save();
 
-        // Find and revert the original missions
-        // This is a simplification; a real app might store the consolidated IDs in the delivery request.
-        // For now, we assume we can find them based on the driver and consolidation status.
         await Request.updateMany(
             { driverId: deliveryRequest.driverId, isConsolidated: true, sortingCenterId: sortingId },
             { $set: { isConsolidated: false } }
@@ -827,8 +841,12 @@ adRouter.post('/', auth, async (req, res) => {
 
 // --- 3. Delete an ad ---
 adRouter.delete('/:id', auth, async (req, res) => {
-    const adId = req.params.id;
+    const adId = parseInt(req.params.id, 10);
     const userId = req.user.id;
+
+    if (isNaN(adId)) {
+        return res.status(400).json({ msg: 'Invalid Ad ID.' });
+    }
 
     try {
         const ad = await Ad.findOne({ id: adId });
@@ -836,12 +854,10 @@ adRouter.delete('/:id', auth, async (req, res) => {
             return res.status(404).json({ msg: 'Ad not found.' });
         }
 
-        // Authorization: only the creator can delete
         if (ad.sellerId !== userId && ad.buyerId !== userId) {
             return res.status(403).json({ msg: 'User not authorized to delete this ad.' });
         }
         
-        // Also delete associated messages
         const conversationIdsToDelete = await Message.distinct('conversationId', { adId: ad.id });
         if (conversationIdsToDelete.length > 0) {
             await Message.deleteMany({ conversationId: { $in: conversationIdsToDelete } });
@@ -856,7 +872,6 @@ adRouter.delete('/:id', auth, async (req, res) => {
     }
 });
 
-// Note: Ads are public, so GET doesn't need auth middleware on the whole router
 app.use('/api/ads', adRouter);
 
 
@@ -864,7 +879,7 @@ app.use('/api/ads', adRouter);
 const messageRouter = express.Router();
 
 // --- 1. Get all messages for the logged-in user ---
-messageRouter.get('/', auth, async (req, res) => {
+messageRouter.get('/', async (req, res) => {
     try {
         const messages = await Message.find({
             $or: [{ senderId: req.user.id }, { recipientId: req.user.id }]
@@ -877,9 +892,15 @@ messageRouter.get('/', auth, async (req, res) => {
 });
 
 // --- 2. Create a new message ---
-messageRouter.post('/', auth, async (req, res) => {
-    const { adId, recipientId, content, image } = req.body;
+messageRouter.post('/', async (req, res) => {
+    const { content, image } = req.body;
+    const adId = req.body.adId ? parseInt(req.body.adId, 10) : null;
+    const recipientId = parseInt(req.body.recipientId, 10);
     const senderId = req.user.id;
+
+    if (isNaN(recipientId) || (req.body.adId && isNaN(adId))) {
+        return res.status(400).json({ msg: 'Invalid ID provided.' });
+    }
 
     try {
         const sender = await User.findOne({ id: senderId });
@@ -910,7 +931,7 @@ messageRouter.post('/', auth, async (req, res) => {
 });
 
 // --- 3. Mark a conversation as read ---
-messageRouter.put('/conversation/:id/read', auth, async (req, res) => {
+messageRouter.put('/conversation/:id/read', async (req, res) => {
     const conversationId = req.params.id;
     const userId = req.user.id;
 
@@ -927,7 +948,7 @@ messageRouter.put('/conversation/:id/read', auth, async (req, res) => {
 });
 
 // --- 4. Delete a conversation ---
-messageRouter.delete('/conversation/:id', auth, async (req, res) => {
+messageRouter.delete('/conversation/:id', async (req, res) => {
     const conversationId = req.params.id;
     const userId = req.user.id;
 
