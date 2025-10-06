@@ -934,10 +934,13 @@ app.put('/api/connections/:id/reject', auth, async (req, res) => {
     }
 });
 
+// === 🔧 ENDPOINT اصلی بروزرسانی اتصال - کاملاً اصلاح شده ===
 app.put('/api/connections/:id', auth, async (req, res) => {
     try {
         const connectionId = parseInt(req.params.id);
         const { status, suspended } = req.body;
+
+        console.log('📡 درخواست بروزرسانی اتصال:', connectionId, '- کاربر:', req.user.id, '- داده:', req.body);
 
         const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
@@ -947,33 +950,52 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // بررسی مجوز - فقط مرکز سورتینگ می‌تواند اتصال‌های دریافتی را تأیید/رد کند
-        if (connection.targetId !== req.user.id) {
+        // 🔧 **اصلاح شرط بررسی مجوز - کاربر باید یا source یا target باشد**
+        const isSource = connection.sourceId === req.user.id;
+        const isTarget = connection.targetId === req.user.id;
+        
+        if (!isSource && !isTarget) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
             });
         }
 
+        // 🔧 **محدودیت‌های نقش‌ها برای وضعیت‌های خاص**
+        if (status === 'approved' || status === 'rejected') {
+            // فقط مرکز سورتینگ می‌تواند اتصال را تأیید/رد کند
+            if (connection.targetId !== req.user.id) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'فقط مرکز سورتینگ می‌تواند اتصال را تأیید یا رد کند'
+                });
+            }
+        }
+
+        // بروزرسانی فیلدها
+        const updateData = {};
+        if (status) updateData.status = status;
+        if (suspended !== undefined) updateData.suspended = suspended;
+
         const updatedConnection = await Connection.findOneAndUpdate(
             { id: connectionId },
-            {
-                ...(status && { status }),
-                ...(suspended !== undefined && { suspended })
-            },
+            updateData,
             { new: true }
         );
 
+        console.log('✅ اتصال بروزرسانی شد:', updatedConnection);
+
         res.json({
             success: true,
-            connection: updatedConnection
+            connection: updatedConnection,
+            message: 'اتصال با موفقیت بروزرسانی شد'
         });
 
     } catch (error) {
-        console.error('خطای بروزرسانی اتصال:', error);
+        console.error('❌ خطای بروزرسانی اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در بروزرسانی اتصال'
+            message: 'خطای سرور در بروزرسانی اتصال: ' + error.message
         });
     }
 });
