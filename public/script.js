@@ -1734,7 +1734,7 @@ function createDriverMap(lat, lng) {
             });
 
             users.forEach(user => {
-                if (currentUser && user.id !== currentUser.id && user.location && shouldShowUser(user)) {
+                if (currentUser && user.id !== currentUser.id && user.location && shouldShowUser(user) ) {
                     const activeRequest = user.role === 'driver'
                         ? requests.find(r => r.driverId === user.id && ['assigned', 'in_progress', 'delivering', 'in_progress_to_sorting'].includes(r.status))
                         : null;
@@ -1838,7 +1838,7 @@ function refreshAllMapMarkers() {
                 date: new Date().toLocaleDateString('fa-IR'),
                 createdAt: new Date().toISOString(),
                 image: imageDataUrl,
-                adType: adType
+                adType
             };
 
             if (adType === 'supply') {
@@ -2773,6 +2773,8 @@ function refreshAllMapMarkers() {
                 return;
             }
             await requestConnection(targetId, 'greenhouse');
+            await loadDataFromServer();
+            loadGreenhouseConnections();
         }
 
         async function disconnectFromCenter(connectionId) {
@@ -2819,6 +2821,9 @@ function refreshAllMapMarkers() {
                 `;
                 container.innerHTML = formHtml;
             }
+
+            // Get all connections for the current greenhouse
+            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse');
 
             // --- Part 2: Update the dropdown with *available* centers ---
             const select = document.getElementById('greenhouse-sorting-center-select');
@@ -3027,12 +3032,11 @@ function refreshAllMapMarkers() {
             if (request && request.status === 'pending') {
                 const response = await api.deleteRequest(requestId);
                 if (response.success) {
-                    // Server should notify sorting center.
                     showToast('درخواست با موفقیت لغو شد.', 'success');
                     await loadDataFromServer();
                     loadGreenhouseRequests();
                 } else {
-                    showToast(response.message || 'خطا در لغو درخواست.', 'error');
+                     showToast(response.message || 'خطا در لغو درخواست.', 'error');
                 }
             } else {
                 showToast('این درخواست دیگر قابل لغو نیست.', 'error');
@@ -3994,363 +3998,6 @@ function refreshAllMapMarkers() {
             showToast('مسیریابی در اپلیکیشن خارجی باز شد', 'success');
         }
 
-        // Report Functions
-        function loadReports(reportType, data) {
-            const tbodyId = `${reportType}-reports-body`;
-            const tbody = document.getElementById(tbodyId);
-            const colSpan = (reportType === 'sorting') ? 7 : 6;
-
-            if (!data || data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${colSpan}" class="px-4 py-8 text-center text-gray-500">گزارشی وجود ندارد</td></tr>`;
-                return;
-            }
-
-            tbody.innerHTML = data.map(request => {
-                const driver = request.driverId ? getUser(request.driverId) : null;
-                const licensePlate = driver ? driver.licensePlate : (request.driverLicensePlate || '-');
-
-                if (reportType === 'greenhouse') {
-                    return `
-                        <tr class="border-b">
-                            <td class="px-4 py-2">${formatDate(request.createdAt)}</td>
-                            <td class="px-4 py-2">${request.type === 'empty' ? 'سبد خالی' : 'سبد پر'}</td>
-                            <td class="px-4 py-2">${request.quantity}</td>
-                            <td class="px-4 py-2">${request.driverName || '-'}</td>
-                            <td class="px-4 py-2">${licensePlate}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-1 rounded-full text-xs ${getStatusClass(request.status)}">
-                                    ${getStatusText(request.status)}
-                                </span>
-                            </td>
-                        </tr>`;
-                }
-                if (reportType === 'sorting') {
-                    if (request.type === 'delivered_basket') {
-                        let rowClass = 'bg-yellow-50';
-                        if (request.status === 'completed') rowClass = 'bg-indigo-50';
-                        if (request.status === 'rejected') rowClass = 'bg-red-50';
-                        // This single block now handles 'in_progress_to_sorting', 'completed', and 'rejected'
-                        return `
-                        <tr class="border-b ${rowClass}">
-                            <td class="px-4 py-2">${formatDate(request.createdAt)}</td>
-                            <td class="px-4 py-2">${request.greenhouseName}</td>
-                            <td class="px-4 py-2">${request.driverName || '-'}</td>
-                            <td class="px-4 py-2">${licensePlate}</td>
-                            <td class="px-4 py-2 font-semibold">تحویل به مرکز</td>
-                            <td class="px-4 py-2">${request.quantity}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-1 rounded-full text-xs ${getStatusClass(request.status)}">
-                                    ${getStatusText(request.status)}
-                                </span>
-                                ${request.rejectionReason ? `<p class="text-xs text-red-700 mt-1">دلیل: ${request.rejectionReason}</p>` : ''}
-                            </td>
-                        </tr>`;
-                    } else {
-                        // This is the logic for original 'full' and 'empty' requests
-                        return `
-                        <tr class="border-b">
-                            <td class="px-4 py-2">${formatDate(request.createdAt)}</td>
-                            <td class="px-4 py-2">${request.greenhouseName}</td>
-                            <td class="px-4 py-2">${request.driverName || '-'}</td>
-                            <td class="px-4 py-2">${licensePlate}</td>
-                            <td class="px-4 py-2">${request.type === 'empty' ? 'سبد خالی' : 'سبد پر'}</td>
-                            <td class="px-4 py-2">${request.quantity}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-1 rounded-full text-xs ${getStatusClass(request.status)}">
-                                    ${getStatusText(request.status)}
-                                </span>
-                            </td>
-                        </tr>`;
-                    }
-                }
-                if (reportType === 'driver') {
-                     if (request.type === 'delivered_basket') {
-                        return `
-                        <tr class="border-b bg-indigo-50">
-                            <td class="px-4 py-2">${formatDate(request.createdAt)}</td>
-                            <td class="px-4 py-2">${request.sortingCenterName}</td>
-                            <td class="px-4 py-2 font-semibold">تحویل به مرکز</td>
-                            <td class="px-4 py-2">${request.quantity}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-1 rounded-full text-xs ${getStatusClass(request.status)}">
-                                    ${getStatusText(request.status)}
-                                </span>
-                            </td>
-                        </tr>`;
-                    } else {
-                        return `
-                        <tr class="border-b">
-                            <td class="px-4 py-2">${formatDate(request.createdAt)}</td>
-                            <td class="px-4 py-2">${request.greenhouseName}</td>
-                            <td class="px-4 py-2">${request.type === 'empty' ? 'سبد خالی' : 'سبد پر'}</td>
-                            <td class="px-4 py-2">${request.quantity}</td>
-                            <td class="px-4 py-2">
-                                <span class="px-2 py-1 rounded-full text-xs ${getStatusClass(request.status)}">
-                                    ${getStatusText(request.status)}
-                                </span>
-                            </td>
-                        </tr>`;
-                    }
-                }
-            }).join('');
-        }
-
-        function filterAndLoadReports(reportType) {
-            let filteredRequests;
-            let startDateFilterId, endDateFilterId, nameFilterId, typeFilterId, basketTypeFilterId;
-
-            switch(reportType) {
-                case 'greenhouse':
-                    startDateFilterId = 'greenhouse-start-date-filter';
-                    endDateFilterId = 'greenhouse-end-date-filter';
-                    basketTypeFilterId = 'greenhouse-basket-type-filter';
-                    filteredRequests = requests.filter(r => r.greenhouseId === currentUser.id);
-                    break;
-                case 'sorting':
-                    startDateFilterId = 'sorting-start-date-filter';
-                    endDateFilterId = 'sorting-end-date-filter';
-                    nameFilterId = 'sorting-filter-name';
-                    typeFilterId = 'sorting-filter-type';
-                    basketTypeFilterId = 'sorting-basket-type-filter';
-                    filteredRequests = requests.filter(r => r.sortingCenterId === currentUser.id);
-                    break;
-                case 'driver':
-                    startDateFilterId = 'driver-start-date-filter';
-                    endDateFilterId = 'driver-end-date-filter';
-                    basketTypeFilterId = 'driver-basket-type-filter';
-                    filteredRequests = requests.filter(r => r.driverId === currentUser.id);
-                    break;
-                default:
-                    return;
-            }
-
-            const startDateValue = document.getElementById(startDateFilterId).value;
-            const endDateValue = document.getElementById(endDateFilterId).value;
-
-            if (startDateValue && endDateValue) {
-                const startDate = new Date(startDateValue);
-                startDate.setUTCHours(0, 0, 0, 0);
-                
-                const endDate = new Date(endDateValue);
-                endDate.setUTCHours(23, 59, 59, 999);
-
-                if (startDate > endDate) {
-                    showToast('تاریخ شروع نمی‌تواند بعد از تاریخ پایان باشد', 'error');
-                    loadReports(reportType, []); // Clear report if dates are invalid
-                    return;
-                }
-
-                filteredRequests = filteredRequests.filter(r => {
-                    const requestDate = new Date(r.createdAt);
-                    return requestDate >= startDate && requestDate <= endDate;
-                });
-            }
-
-            if (basketTypeFilterId) {
-                const basketType = document.getElementById(basketTypeFilterId).value;
-                if (basketType !== 'all') {
-                    filteredRequests = filteredRequests.filter(r => r.type === basketType);
-                }
-            }
-
-            if (reportType === 'sorting') {
-                const filterName = document.getElementById(nameFilterId).value.trim().toLowerCase();
-                const filterType = document.getElementById(typeFilterId).value;
-
-                if (filterName) {
-                    if (filterType === 'greenhouse') {
-                        filteredRequests = filteredRequests.filter(r => r.greenhouseName.toLowerCase().includes(filterName));
-                    } else if (filterType === 'driver') {
-                        filteredRequests = filteredRequests.filter(r => r.driverName && r.driverName.toLowerCase().includes(filterName));
-                    } else {
-                         filteredRequests = filteredRequests.filter(r => 
-                            (r.greenhouseName && r.greenhouseName.toLowerCase().includes(filterName)) ||
-                            (r.driverName && r.driverName.toLowerCase().includes(filterName))
-                        );
-                    }
-                }
-            }
-
-            loadReports(reportType, filteredRequests);
-        }
-
-        function filterGreenhouseReports() { filterAndLoadReports('greenhouse'); }
-        function filterSortingReports() { filterAndLoadReports('sorting'); }
-        function filterDriverReports() { filterAndLoadReports('driver'); }
-        function filterFarmerReports() {
-            let filteredAds = supplyAds.filter(ad => ad.sellerId === currentUser.id);
-
-            const startDateValue = document.getElementById('farmer-start-date-filter').value;
-            const endDateValue = document.getElementById('farmer-end-date-filter').value;
-
-            if (startDateValue && endDateValue) {
-                const startDate = new Date(startDateValue);
-                startDate.setUTCHours(0, 0, 0, 0);
-                
-                const endDate = new Date(endDateValue);
-                endDate.setUTCHours(23, 59, 59, 999);
-
-                if (startDate > endDate) {
-                    showToast('تاریخ شروع نمی‌تواند بعد از تاریخ پایان باشد', 'error');
-                    loadFarmerAdsReport([]);
-                    return;
-                }
-
-                filteredAds = filteredAds.filter(ad => {
-                    const adDate = new Date(ad.createdAt || 0);
-                    return adDate >= startDate && adDate <= endDate;
-                });
-            }
-
-            loadFarmerAdsReport(filteredAds);
-        }
-
-        function loadFarmerAdsReport(data) {
-            const tbody = document.getElementById('farmer-reports-body');
-            if (!tbody) return;
-            if (!data || data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">هیچ آگهی در این بازه زمانی ثبت نشده است.</td></tr>`;
-                return;
-            }
-
-            tbody.innerHTML = data.map(ad => `
-                <tr class="border-b hover:bg-gray-50">
-                    <td class="px-4 py-2">${ad.date}</td>
-                    <td class="px-4 py-2">${ad.product}</td>
-                    <td class="px-4 py-2">${ad.quantity.toLocaleString('fa-IR')}</td>
-                    <td class="px-4 py-2">${ad.price.toLocaleString('fa-IR')}</td>
-                </tr>
-            `).join('');
-        }
-        
-        function filterBuyerReports() {
-            let filteredAds = demandAds.filter(ad => ad.buyerId === currentUser.id);
-
-            const startDateValue = document.getElementById('buyer-start-date-filter').value;
-            const endDateValue = document.getElementById('buyer-end-date-filter').value;
-
-            if (startDateValue && endDateValue) {
-                const startDate = new Date(startDateValue);
-                startDate.setUTCHours(0, 0, 0, 0);
-                
-                const endDate = new Date(endDateValue);
-                endDate.setUTCHours(23, 59, 59, 999);
-
-                if (startDate > endDate) {
-                    showToast('تاریخ شروع نمی‌تواند بعد از تاریخ پایان باشد', 'error');
-                    loadBuyerReports([]);
-                    return;
-                }
-
-                filteredAds = filteredAds.filter(ad => {
-                    const adDate = new Date(ad.createdAt || 0);
-                    return adDate >= startDate && adDate <= endDate;
-                });
-            }
-
-            loadBuyerReports(filteredAds);
-        }
-
-        function loadBuyerReports(data) {
-            const tbody = document.getElementById('buyer-reports-body');
-            if (!tbody) return;
-            if (!data || data.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">هیچ آگهی در این بازه زمانی ثبت نشده است.</td></tr>`;
-                return;
-            }
-
-            tbody.innerHTML = data.map(ad => `
-                <tr class="border-b hover:bg-gray-50">
-                    <td class="px-4 py-2">${ad.date}</td>
-                    <td class="px-4 py-2">${ad.product}</td>
-                    <td class="px-4 py-2">${ad.quantity.toLocaleString('fa-IR')}</td>
-                    <td class="px-4 py-2">${ad.price.toLocaleString('fa-IR')}</td>
-                </tr>
-            `).join('');
-        }
-
-
-        function downloadReport(reportType) {
-            const tbodyId = `${reportType}-reports-body`;
-            const headerIds = {
-                'greenhouse': ['تاریخ', 'نوع', 'تعداد', 'راننده', 'پلاک', 'وضعیت'],
-                'sorting': ['تاریخ', 'گلخانه', 'راننده', 'پلاک', 'نوع', 'تعداد', 'وضعیت'],
-                'driver': ['تاریخ', 'گلخانه', 'نوع', 'تعداد', 'وضعیت']
-            };
-
-            const tbody = document.getElementById(tbodyId);
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            
-            if (rows.length === 0 || (rows.length === 1 && rows[0].textContent.includes("گزارشی وجود ندارد"))) {
-                showToast('داده‌ای برای دانلود وجود ندارد', 'info');
-                return;
-            }
-
-            const headers = headerIds[reportType];
-            const data = rows.map(row => {
-                const cells = Array.from(row.querySelectorAll('td'));
-                return cells.map(cell => `"${cell.textContent.trim()}"`);
-            });
-
-            let csvContent = [
-                headers.join(','),
-                ...data.map(row => row.join(','))
-            ].join('\n');
-            
-            const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `${reportType}_report_${currentUser.username}_${new Date().toISOString().split('T')[0]}.csv`;
-            link.click();
-        }
-
-        function downloadGreenhouseReport() { downloadReport('greenhouse'); }
-        function downloadSortingReport() { downloadReport('sorting'); }
-        function downloadDriverReport() { downloadReport('driver'); }
-
-        function downloadReportAsPDF(reportType) {
-            const { jsPDF } = window.jspdf;
-            const reportContainerId = `${reportType}-reports`;
-            const originalElement = document.getElementById(reportContainerId);
-
-            if (!originalElement || !originalElement.querySelector('tbody tr') || originalElement.querySelector('tbody tr td[colspan]')) {
-                showToast('داده‌ای برای دانلود به صورت PDF وجود ندارد', 'info');
-                return;
-            }
-            
-            const printContainer = document.createElement('div');
-            document.body.appendChild(printContainer);
-            const clone = originalElement.cloneNode(true);
-            printContainer.style.position = 'absolute';
-            printContainer.style.left = '-9999px';
-            printContainer.style.top = '0px';
-            printContainer.style.zIndex = '9999';
-            printContainer.style.backgroundColor = 'white';
-            printContainer.style.width = '1000px'; 
-            clone.style.maxHeight = 'none';
-            clone.style.overflow = 'visible';
-            printContainer.appendChild(clone);
-            
-            html2canvas(printContainer, { scale: 2, useCORS: true }).then(canvas => {
-                const imgData = canvas.toDataURL('image/png');
-                
-                const pdf = new jsPDF({
-                    orientation: 'landscape',
-                    unit: 'px',
-                    format: [canvas.width, canvas.height]
-                });
-
-                pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-                
-                const today = new Date().toISOString().split('T')[0];
-                const filename = `${reportType}_report_${today}.pdf`;
-                pdf.save(filename);
-
-                document.body.removeChild(printContainer);
-            });
-        }
-
-
         // Notification Functions
         function updateNotificationBadge() {
             const unreadCount = notifications.filter(n => 
@@ -4703,7 +4350,6 @@ function refreshAllMapMarkers() {
             });
         }
 
-       
         function showDisclaimerModal() {
             const modal = document.getElementById('disclaimer-modal');
             const roleTextElement = document.getElementById('disclaimer-modal-role-text');
