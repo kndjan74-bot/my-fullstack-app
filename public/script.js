@@ -486,7 +486,7 @@
         // Initialize App
         document.addEventListener('DOMContentLoaded', async function() {
             // Check for auth token on load
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('token') || sessionStorage.getItem('token');
             if (token) {
                 const authResponse = await api.getAuthUser(token);
                 if (authResponse.success) {
@@ -495,6 +495,7 @@
                 } else {
                     // Token is invalid or expired
                     localStorage.removeItem('token');
+                    sessionStorage.removeItem('token');
                     updateUiState(UI_STATES.LANDING);
                 }
             } else {
@@ -784,7 +785,7 @@ const getApiBaseUrl = () => {
 const API_BASE_URL = getApiBaseUrl();
         const api = {
             async _fetch(url, options = {}) {
-                const token = localStorage.getItem('token');
+                const token = localStorage.getItem('token') || sessionStorage.getItem('token');
                 const headers = {
                     'Content-Type': 'application/json',
                     ...options.headers,
@@ -795,10 +796,12 @@ const API_BASE_URL = getApiBaseUrl();
 
                 try {
                     const response = await fetch(url, { ...options, headers });
-                    const data = await response.json();
                     if (!response.ok) {
-                        return { success: false, message: data.msg || data.message || `خطای سرور: ${response.status}` };
+                        const data = await response.json();
+                        console.error(`API error: ${response.status} - ${data.message || 'Unknown error'}`);
+                        return { success: false, message: data.message || `خطای سرور: ${response.status}` };
                     }
+                    const data = await response.json();
                     return { success: true, ...data };
                 } catch (err) {
                     console.error(`API call to ${url} failed:`, err);
@@ -808,10 +811,20 @@ const API_BASE_URL = getApiBaseUrl();
 
             // --- Authentication ---
             async register(userData) {
-                return this._fetch(`${API_BASE_URL}/users/register`, { method: 'POST', body: JSON.stringify(userData) });
+                const response = await this._fetch(`${API_BASE_URL}/users/register`, { method: 'POST', body: JSON.stringify(userData) });
+                if (response.success && response.token) {
+                    localStorage.setItem('token', response.token);
+                    sessionStorage.setItem('token', response.token);
+                }
+                return response;
             },
             async login(phone, password) {
-                return this._fetch(`${API_BASE_URL}/users/login`, { method: 'POST', body: JSON.stringify({ phone, password }) });
+                const response = await this._fetch(`${API_BASE_URL}/users/login`, { method: 'POST', body: JSON.stringify({ phone, password }) });
+                if (response.success && response.token) {
+                    localStorage.setItem('token', response.token);
+                    sessionStorage.setItem('token', response.token);
+                }
+                return response;
             },
             async getAuthUser() {
                  return this._fetch(`${API_BASE_URL}/users/auth`);
@@ -832,62 +845,132 @@ const API_BASE_URL = getApiBaseUrl();
 
             // --- Ads ---
             async createAd(adData) {
-                return this._fetch(`${API_BASE_URL}/ads`, { method: 'POST', body: JSON.stringify(adData) });
+                const response = await this._fetch(`${API_BASE_URL}/ads`, { method: 'POST', body: JSON.stringify(adData) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    applyMarketFilters(true);
+                }
+                return response;
             },
             async deleteAd(adId) {
-                return this._fetch(`${API_BASE_URL}/ads/${adId}`, { method: 'DELETE' });
+                const response = await this._fetch(`${API_BASE_URL}/ads/${adId}`, { method: 'DELETE' });
+                if (response.success) {
+                    await loadDataFromServer();
+                    applyMarketFilters(true);
+                }
+                return response;
             },
 
             // --- Messages ---
             async createMessage(messageData) {
-                return this._fetch(`${API_BASE_URL}/messages`, { method: 'POST', body: JSON.stringify(messageData) });
+                const response = await this._fetch(`${API_BASE_URL}/messages`, { method: 'POST', body: JSON.stringify(messageData) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    refreshActiveChats();
+                    updateAllNotifications();
+                }
+                return response;
             },
             async deleteConversation(conversationId) {
-                return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}`, { method: 'DELETE' });
+                const response = await this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}`, { method: 'DELETE' });
+                if (response.success) {
+                    await loadDataFromServer();
+                    refreshActiveChats();
+                    updateAllNotifications();
+                }
+                return response;
             },
             async markConversationAsRead(conversationId) {
-                 return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}/read`, { method: 'PUT' });
+                 const response = await this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}/read`, { method: 'PUT' });
+                 if (response.success) {
+                     await loadDataFromServer();
+                     updateAllNotifications();
+                 }
+                 return response;
             },
             
             // --- Connections ---
             async createConnection(targetId) {
-                return this._fetch(`${API_BASE_URL}/connections`, { method: 'POST', body: JSON.stringify({ targetId }) });
+                const response = await this._fetch(`${API_BASE_URL}/connections`, { method: 'POST', body: JSON.stringify({ targetId }) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                }
+                return response;
             },
             async updateConnection(connectionId, updates) {
-                 return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(updates) });
+                 const response = await this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(updates) });
+                 if (response.success) {
+                     await loadDataFromServer();
+                     loadPanelData();
+                 }
+                 return response;
             },
             async deleteConnection(connectionId) {
-                return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'DELETE' });
+                const response = await this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'DELETE' });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                }
+                return response;
             },
 
             // --- Requests ---
             async createRequest(requestData) {
-                return this._fetch(`${API_BASE_URL}/requests`, { method: 'POST', body: JSON.stringify(requestData) });
+                const response = await this._fetch(`${API_BASE_URL}/requests`, { method: 'POST', body: JSON.stringify(requestData) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                }
+                return response;
             },
             async updateRequest(requestId, updates) {
-                return this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'PUT', body: JSON.stringify(updates) });
+                const response = await this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'PUT', body: JSON.stringify(updates) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                }
+                return response;
             },
             async deleteRequest(requestId) {
-                return this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'DELETE' });
+                const response = await this._fetch(`${API_BASE_URL}/requests/${requestId}`, { method: 'DELETE' });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                }
+                return response;
             },
             async createConsolidatedDelivery(missionsToConsolidate) {
-                return this._fetch(`${API_BASE_URL}/requests/consolidate`, { method: 'POST', body: JSON.stringify({ missionIds: missionsToConsolidate.map(m => m.id) }) });
+                const response = await this._fetch(`${API_BASE_URL}/requests/consolidate`, { method: 'POST', body: JSON.stringify({ missionIds: missionsToConsolidate.map(m => m.id) }) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                }
+                return response;
             },
             async rejectConsolidatedDelivery(deliveryRequestId, reason) {
-                return this._fetch(`${API_BASE_URL}/requests/${deliveryRequestId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+                const response = await this._fetch(`${API_BASE_URL}/requests/${deliveryRequestId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+                if (response.success) {
+                    await loadDataFromServer();
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                }
+                return response;
             },
             async getAllRequests() {
-                return { success: true, requests: [] };
+                return this._fetch(`${API_BASE_URL}/requests`);
             },
 
             // --- Getters for loadDataFromServer ---
             async getAllUsers() { return this._fetch(`${API_BASE_URL}/users`); },
             async getAllAds() {
-                return { success: true, ads: [] };
+                return this._fetch(`${API_BASE_URL}/ads`);
             },
             async getAllConnections() { return this._fetch(`${API_BASE_URL}/connections`); },
             async getAllMessages() {
-                return { success: true, messages: [] };
+                return this._fetch(`${API_BASE_URL}/messages`);
             }
         };
 
@@ -955,6 +1038,7 @@ const API_BASE_URL = getApiBaseUrl();
 
             if (response.success && response.token) {
                 localStorage.setItem('token', response.token);
+                sessionStorage.setItem('token', response.token);
                 // The server returns the full user object on successful registration.
                 // We can trust this and don't need to make another auth call.
                 currentUser = response.user;
@@ -975,6 +1059,7 @@ const API_BASE_URL = getApiBaseUrl();
             
             if (response.success && response.token && response.user) {
                 localStorage.setItem('token', response.token);
+                sessionStorage.setItem('token', response.token);
                 // The user object is returned directly from the login response.
                 currentUser = response.user;
                 await showMainApp();
@@ -1295,6 +1380,7 @@ const API_BASE_URL = getApiBaseUrl();
             }
             
             localStorage.removeItem('token');
+            sessionStorage.removeItem('token');
 
             currentUser = null;
             dataSnapshot = {}; // Clear the notification snapshot
@@ -2418,6 +2504,7 @@ function refreshAllMapMarkers() {
                 // The server should create the notification for the target user.
                 showToast('درخواست اتصال ارسال شد', 'success');
                 // Refresh relevant UI parts
+                await loadDataFromServer();
                 if (currentUser.role === 'greenhouse') loadGreenhouseConnections();
                 if (currentUser.role === 'driver') loadDriverConnections();
             } else {
@@ -4627,7 +4714,7 @@ function refreshAllMapMarkers() {
             const roleTexts = {
                 greenhouse: 'شما به عنوان گلخانه‌دار، می‌توانید مستقیماً با مراکز سورتینگ و رانندگان در ارتباط باشید، درخواست‌های حمل و نقل ثبت کنید و محصولات خود را در بازار بزرگ سودسیتی عرضه کنید.',
                 farmer: 'شما به عنوان کشاورز، می‌توانید محصولات خود را بدون واسطه در بازار عرضه کرده و با خریداران از سراسر کشور در ارتباط باشید.',
-                sorting: 'شما به عنوان مرکز سورتینگ، می‌توانید با گلخانه‌داران و رانندگان متعدد همکاری کنید، درخواست‌های حمل و نقل را مدیریت کرده و محصولات دستچین شده را به خریداران عرضه نمایید.',
+                sorting: 'شما به عنوان مرکز سورتینگ، می‌توانید با گلخانه‌داران و رانندگان متعدد همکاری کنید، درخواست‌های حمل و نقل را مدیریت کرده، محصولات دستچین شده را به خریداران عرضه نمایید.',
                 buyer: 'شما به عنوان خریدار، به بازاری بزرگ از محصولات کشاورزی تازه و باکیفیت دسترسی دارید و می‌توانید مستقیماً با تولیدکنندگان و مراکز سورتینگ ارتباط برقرار کنید.',
                 driver: 'شما به عنوان راننده، می‌توانید ماموریت‌های حمل و نقل متنوعی را از مراکز سورتینگ دریافت کرده، مسیر خود را بهینه کنید و درآمد خود را افزایش دهید.'
             };

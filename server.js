@@ -137,6 +137,11 @@ const Message = mongoose.model('Message', MessageSchema);
 const Ad = mongoose.model('Ad', AdSchema);
 
 // ==================== Middleware ====================
+app.use((req, res, next) => {
+    console.log(`📡 Request: ${req.method} ${req.url} from ${req.headers.origin || 'unknown'} - IP: ${req.ip}`);
+    next();
+});
+
 app.use(cors({
     origin: [
         'https://www.soodcity.ir',
@@ -144,10 +149,15 @@ app.use(cors({
         'http://localhost:3000',
         'http://localhost:5000',
         'capacitor://localhost',
-        'https://soodcityb.liara.run'
+        'https://soodcityb.liara.run',
+        'http://192.168.1.1', // برای شبکه‌های محلی موبایل
+        'http://10.0.2.2'     // برای شبیه‌ساز اندروید
     ],
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'x-auth-token']
 }));
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -160,6 +170,7 @@ const auth = async (req, res, next) => {
     const token = req.header('x-auth-token');
     
     if (!token) {
+        console.error('No token provided for', req.url);
         return res.status(401).json({ 
             success: false, 
             message: 'توکن وجود ندارد، دسترسی غیرمجاز' 
@@ -171,6 +182,7 @@ const auth = async (req, res, next) => {
         req.user = decoded;
         next();
     } catch (err) {
+        console.error('Invalid token for', req.url, err.message);
         res.status(401).json({ 
             success: false, 
             message: 'توکن معتبر نیست' 
@@ -934,13 +946,10 @@ app.put('/api/connections/:id/reject', auth, async (req, res) => {
     }
 });
 
-// === 🔧 ENDPOINT اصلی بروزرسانی اتصال - کاملاً اصلاح شده ===
 app.put('/api/connections/:id', auth, async (req, res) => {
     try {
         const connectionId = parseInt(req.params.id);
         const { status, suspended } = req.body;
-
-        console.log('📡 درخواست بروزرسانی اتصال:', connectionId, '- کاربر:', req.user.id, '- داده:', req.body);
 
         const connection = await Connection.findOne({ id: connectionId });
         if (!connection) {
@@ -950,52 +959,33 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        // 🔧 **اصلاح شرط بررسی مجوز - کاربر باید یا source یا target باشد**
-        const isSource = connection.sourceId === req.user.id;
-        const isTarget = connection.targetId === req.user.id;
-        
-        if (!isSource && !isTarget) {
+        // بررسی مجوز - فقط مرکز سورتینگ می‌تواند اتصال‌های دریافتی را تأیید/رد کند
+        if (connection.targetId !== req.user.id) {
             return res.status(403).json({
                 success: false,
                 message: 'مجوز بروزرسانی این اتصال را ندارید'
             });
         }
 
-        // 🔧 **محدودیت‌های نقش‌ها برای وضعیت‌های خاص**
-        if (status === 'approved' || status === 'rejected') {
-            // فقط مرکز سورتینگ می‌تواند اتصال را تأیید/رد کند
-            if (connection.targetId !== req.user.id) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'فقط مرکز سورتینگ می‌تواند اتصال را تأیید یا رد کند'
-                });
-            }
-        }
-
-        // بروزرسانی فیلدها
-        const updateData = {};
-        if (status) updateData.status = status;
-        if (suspended !== undefined) updateData.suspended = suspended;
-
         const updatedConnection = await Connection.findOneAndUpdate(
             { id: connectionId },
-            updateData,
+            {
+                ...(status && { status }),
+                ...(suspended !== undefined && { suspended })
+            },
             { new: true }
         );
 
-        console.log('✅ اتصال بروزرسانی شد:', updatedConnection);
-
         res.json({
             success: true,
-            connection: updatedConnection,
-            message: 'اتصال با موفقیت بروزرسانی شد'
+            connection: updatedConnection
         });
 
     } catch (error) {
-        console.error('❌ خطای بروزرسانی اتصال:', error);
+        console.error('خطای بروزرسانی اتصال:', error);
         res.status(500).json({
             success: false,
-            message: 'خطای سرور در بروزرسانی اتصال: ' + error.message
+            message: 'خطای سرور در بروزرسانی اتصال'
         });
     }
 });
