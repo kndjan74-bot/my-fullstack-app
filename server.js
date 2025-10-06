@@ -137,11 +137,6 @@ const Message = mongoose.model('Message', MessageSchema);
 const Ad = mongoose.model('Ad', AdSchema);
 
 // ==================== Middleware ====================
-app.use((req, res, next) => {
-    console.log(`📡 Request: ${req.method} ${req.url} from ${req.headers.origin || 'unknown'} - IP: ${req.ip}`);
-    next();
-});
-
 app.use(cors({
     origin: [
         'https://www.soodcity.ir',
@@ -151,7 +146,8 @@ app.use(cors({
         'capacitor://localhost',
         'https://soodcityb.liara.run',
         'http://192.168.1.1', // برای شبکه‌های محلی موبایل
-        'http://10.0.2.2'     // برای شبیه‌ساز اندروید
+        'http://10.0.2.2',     // برای شبیه‌ساز اندروید
+        'http://*', '*'        // موقت برای تست موبایل
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -170,7 +166,6 @@ const auth = async (req, res, next) => {
     const token = req.header('x-auth-token');
     
     if (!token) {
-        console.error('No token provided for', req.url);
         return res.status(401).json({ 
             success: false, 
             message: 'توکن وجود ندارد، دسترسی غیرمجاز' 
@@ -182,7 +177,6 @@ const auth = async (req, res, next) => {
         req.user = decoded;
         next();
     } catch (err) {
-        console.error('Invalid token for', req.url, err.message);
         res.status(401).json({ 
             success: false, 
             message: 'توکن معتبر نیست' 
@@ -1589,5 +1583,5 @@ app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
-    console.log(`🔧 دیباگ سیستم: http://localhost:${PORT}/api/debug/system`);
+    console.log(`🔧 سلامت سرور: http://localhost:${PORT}/api/debug/system`);
 });

@@ -2820,9 +2820,6 @@ function refreshAllMapMarkers() {
                 container.innerHTML = formHtml;
             }
 
-            // Get all connections for the current greenhouse
-            const myConnections = connections.filter(c => c.sourceId === currentUser.id && c.sourceRole === 'greenhouse');
-
             // --- Part 2: Update the dropdown with *available* centers ---
             const select = document.getElementById('greenhouse-sorting-center-select');
             const selectedValue = select.value; // Store current selection
@@ -4714,7 +4711,7 @@ function refreshAllMapMarkers() {
             const roleTexts = {
                 greenhouse: 'شما به عنوان گلخانه‌دار، می‌توانید مستقیماً با مراکز سورتینگ و رانندگان در ارتباط باشید، درخواست‌های حمل و نقل ثبت کنید و محصولات خود را در بازار بزرگ سودسیتی عرضه کنید.',
                 farmer: 'شما به عنوان کشاورز، می‌توانید محصولات خود را بدون واسطه در بازار عرضه کرده و با خریداران از سراسر کشور در ارتباط باشید.',
-                sorting: 'شما به عنوان مرکز سورتینگ، می‌توانید با گلخانه‌داران و رانندگان متعدد همکاری کنید، درخواست‌های حمل و نقل را مدیریت کرده، محصولات دستچین شده را به خریداران عرضه نمایید.',
+                sorting: 'شما به عنوان مرکز سورتینگ، می‌توانید با گلخانه‌داران و رانندگان متعدد همکاری کنید، درخواست‌های حمل و نقل را مدیریت کرده و محصولات دستچین شده را به خریداران عرضه نمایید.',
                 buyer: 'شما به عنوان خریدار، به بازاری بزرگ از محصولات کشاورزی تازه و باکیفیت دسترسی دارید و می‌توانید مستقیماً با تولیدکنندگان و مراکز سورتینگ ارتباط برقرار کنید.',
                 driver: 'شما به عنوان راننده، می‌توانید ماموریت‌های حمل و نقل متنوعی را از مراکز سورتینگ دریافت کرده، مسیر خود را بهینه کنید و درآمد خود را افزایش دهید.'
             };
