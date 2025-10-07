@@ -342,6 +342,20 @@ app.post('/api/users/login', async (req, res) => {
     }
 });
 
+app.post('/api/users/check-phone', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'شماره تلفن ارائه نشده است' });
+        }
+        const user = await User.findOne({ phone });
+        res.json({ success: true, exists: !!user });
+    } catch (error) {
+        console.error('خطای بررسی شماره تلفن:', error);
+        res.status(500).json({ success: false, message: 'خطای سرور' });
+    }
+});
+
 app.get('/api/users/auth', auth, async (req, res) => {
     try {
         const user = await User.findOne({ id: req.user.id });

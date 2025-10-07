@@ -768,7 +768,7 @@
             }
         }
 
-      // --- API ---
+           // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -841,6 +841,9 @@ const API_BASE_URL = getApiBaseUrl();
             async resetPassword(phone, newPassword) {
                 // This endpoint needs to be implemented on the backend
                 return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, newPassword }) });
+            },
+            async checkUserExists(phone) {
+                return this._fetch(`${API_BASE_URL}/users/check-phone`, { method: 'POST', body: JSON.stringify({ phone }) });
             },
 
             // --- Ads ---
@@ -1132,24 +1135,29 @@ const API_BASE_URL = getApiBaseUrl();
         }
         */
 
-        // === NEW PASSWORD RECOVERY FUNCTIONS (FROM USER) ===
+        // === NEW PASSWORD RECOVERY FUNCTIONS (REFACTORED) ===
         async function handlePasswordRecovery(event) {
             event.preventDefault();
-            await loadDataFromServer();
             const phone = document.getElementById('recovery-phone').value;
-            const user = users.find(u => u.phone === phone);
+            
+            // Use the new, unauthenticated endpoint to check if the user exists
+            const response = await api.checkUserExists(phone);
 
-            if (user) {
-                // Call the new function to send the SMS
+            if (response.success && response.exists) {
+                // If user exists, proceed to send SMS
                 await sendVerificationSms(phone);
 
                 // Show the next step in the UI
                 document.getElementById('recovery-phone-display').textContent = phone;
                 document.getElementById('recovery-step-1').classList.add('hidden');
                 document.getElementById('recovery-step-2').classList.remove('hidden');
-                document.getElementById('recovery-result').classList.add('hidden'); // Ensure result is hidden
-            } else {
+                document.getElementById('recovery-result').classList.add('hidden');
+            } else if (response.success && !response.exists) {
+                // If user does not exist
                 showToast('کاربری با این شماره تلفن یافت نشد', 'error');
+            } else {
+                // Handle API call failure or other errors
+                showToast(response.message || 'خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید.', 'error');
             }
         }
 
@@ -2529,6 +2537,7 @@ function refreshAllMapMarkers() {
                 await loadDataFromServer(); // Reload data to reflect changes
                 loadSortingConnectionRequests();
                 loadSortingApprovedConnections();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در تایید اتصال.', 'error');
             }
@@ -2544,6 +2553,7 @@ function refreshAllMapMarkers() {
                 showToast('درخواست اتصال رد شد', 'info');
                 await loadDataFromServer(); // Reload data to reflect changes
                 loadSortingConnectionRequests();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
             }
@@ -2952,6 +2962,7 @@ function refreshAllMapMarkers() {
                 event.target.reset();
                 await loadDataFromServer();
                 loadGreenhouseRequests();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در ارسال درخواست.', 'error');
             }
@@ -3166,6 +3177,8 @@ function refreshAllMapMarkers() {
                     await loadDataFromServer();
                     loadSortingRequests();
                     loadAvailableDrivers();
+                    updateAllNotifications();
+                    refreshAllMapMarkers();
                 } else {
                      showToast(response.message || 'خطا در رد کردن درخواست.', 'error');
                 }
@@ -3582,6 +3595,9 @@ function refreshAllMapMarkers() {
                 loadDriverRequests();
                 loadDriverActiveMission();
                 loadDriverStatus();
+                
+                // Instantly update the driver's marker color on all maps
+                refreshAllMapMarkers();
 
                 // Find the accepted request to start navigation
                 const request = requests.find(r => r.id === requestId);
