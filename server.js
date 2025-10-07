@@ -770,6 +770,12 @@ app.post('/api/connections', auth, async (req, res) => {
 
         let { targetId } = req.body;
 
+        // استخراج targetId از object اگر لازم باشد
+        if (targetId && typeof targetId === 'object' && targetId.targetId) {
+            console.log('🔧 استخراج targetId از object...');
+            targetId = targetId.targetId;
+        }
+
         if (!targetId && targetId !== 0) {
             return res.status(400).json({
                 success: false,
