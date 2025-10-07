@@ -768,7 +768,7 @@
             }
         }
 
-       // --- API ---
+      // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -1137,7 +1137,7 @@ const API_BASE_URL = getApiBaseUrl();
             event.preventDefault();
             await loadDataFromServer();
             const phone = document.getElementById('recovery-phone').value;
-            const user = users.find(u => u.username === phone || u.phone === phone);
+            const user = users.find(u => u.phone === phone);
 
             if (user) {
                 // Call the new function to send the SMS
@@ -1499,6 +1499,15 @@ const API_BASE_URL = getApiBaseUrl();
                 
                 // The storage event listener will handle broadcasting the update to other tabs.
                 // We just need to update the current tab's maps.
+                
+                // --- START: New code for instant marker update ---
+                const currentMap = getCurrentMap();
+                if (currentMap && currentMap.userMarkers && currentMap.userMarkers[currentUser.id]) {
+                    const userMarker = currentMap.userMarkers[currentUser.id];
+                    userMarker.setLatLng([tempSelectedLocation.lat, tempSelectedLocation.lng]);
+                }
+                // --- END: New code for instant marker update ---
+
                 await loadDataFromServer();
                 refreshAllMapMarkers();
                 

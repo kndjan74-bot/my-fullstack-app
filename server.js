@@ -1105,10 +1105,52 @@ app.post('/api/requests', auth, async (req, res) => {
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
+        const updates = req.body;
+
+        // Find the request *before* it's updated to compare old and new statuses
+        const originalRequest = await Request.findOne({ id: requestId });
+
+        // If the status is changing, handle capacity updates
+        if (updates.status && originalRequest && updates.status !== originalRequest.status) {
+            const driver = await User.findOne({ id: originalRequest.driverId });
+
+            if (driver) {
+                // Case 1: Mission is ACCEPTED (status becomes 'in_progress')
+                if (updates.status === 'in_progress' && originalRequest.status === 'assigned') {
+                    let driverUpdate = {};
+                    if (originalRequest.type === 'empty') {
+                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                    } else if (originalRequest.type === 'full') {
+                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                    }
+                    if (Object.keys(driverUpdate).length > 0) {
+                        await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
+                    }
+                }
+                // Case 2: Mission is COMPLETED
+                else if (updates.status === 'completed' && originalRequest.status !== 'completed') {
+                    if (originalRequest.type === 'full') {
+                        // Driver delivered full baskets, so their load capacity is restored,
+                        // and they now have empty baskets to return.
+                        await User.findOneAndUpdate(
+                            { id: driver.id },
+                            { 
+                                $inc: { 
+                                    loadCapacity: originalRequest.quantity,
+                                    emptyBaskets: originalRequest.quantity
+                                } 
+                            }
+                        );
+                    }
+                    // For 'empty' type missions, the driver just delivered the empty baskets.
+                    // Their capacity doesn't change upon completion, it was already adjusted at the start.
+                }
+            }
+        }
         
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
-            req.body,
+            updates,
             { new: true }
         );
 
