@@ -40,38 +40,11 @@ const sendPushNotification = async (userId, payload) => {
     }
 };
 
-// تابع کمکی برای ارسال نوتیفیکیشن به همه کاربران مشترک
-const broadcastToAll = async (payload) => {
-    try {
-        const usersWithSubscriptions = await User.find({ subscription: { $ne: null } });
-        console.log(`📢 در حال ارسال پیام به ${usersWithSubscriptions.length} کاربر.`);
-        
-        const notificationPayload = JSON.stringify(payload);
-        
-        const promises = usersWithSubscriptions.map(user => 
-            webPush.sendNotification(user.subscription, notificationPayload)
-                .catch(error => {
-                    console.error(`❌ ارسال پیام به کاربر ${user.id} ناموفق بود:`, error.body || error.message);
-                    // حذف اشتراک‌های منقضی شده
-                    if (error.statusCode === 410 || error.statusCode === 404) {
-                        console.log('🗑️ حذف اشتراک منقضی شده برای کاربر:', user.id);
-                        return User.updateOne({ id: user.id }, { $set: { subscription: null } });
-                    }
-                })
-        );
-        
-        await Promise.all(promises);
-        console.log('✅ ارسال پیام همگانی تکمیل شد.');
-    } catch (error) {
-        console.error('💥 خطای بحرانی در ارسال پیام همگانی:', error);
-    }
-};
-
 
 const app = express();
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@sabalan.liara.cloud:32460/my-app?authSource=admin', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
@@ -1261,27 +1234,6 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
 
-        // ارسال نوتیفیکیشن "خاموش" برای به‌روزرسانی لحظه‌ای UI در تایید دو مرحله‌ای
-        if (updates.isPickupConfirmed && !originalRequest.isPickupConfirmed) {
-            const silentPayload = { type: 'data-refresh', body: 'data has been updated' };
-            
-            // Find the other user in the transaction to notify them.
-            const recipientId = req.user.id === originalRequest.driverId 
-                ? originalRequest.greenhouseId 
-                : originalRequest.driverId;
-            
-            if (recipientId) {
-                console.log(`سیگنال رفرش برای کاربر ${recipientId} ارسال می‌شود.`);
-                sendPushNotification(recipientId, silentPayload).catch(err => console.error("ارسال نوتیفیکیشن خاموش ناموفق بود:", err));
-            }
-        }
-
-        // اگر ماموریت تکمیل شده باشد، به همه کاربران سیگنال رفرش بفرست
-        if (updates.status === 'completed' && originalRequest.status !== 'completed') {
-            console.log(`✅ ماموریت ${originalRequest.id} تکمیل شد. ارسال سیگنال رفرش به همه.`);
-            const silentPayload = { type: 'data-refresh', body: 'mission completed' };
-            broadcastToAll(silentPayload).catch(err => console.error("ارسال سیگنال رفرش همگانی ناموفق بود:", err));
-        }
 
         res.json({
             success: true,
