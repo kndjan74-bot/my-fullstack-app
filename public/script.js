@@ -768,7 +768,7 @@
             }
         }
 
-        // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -5051,7 +5051,7 @@ function refreshAllMapMarkers() {
             });
 
             // Listen for messages from the service worker
-            navigator.serviceWorker.onmessage = event => {
+            navigator.serviceWorker.onmessage = async event => {
                 if (event.data && event.data.type === 'location-update') {
                     const { location, timestamp } = event.data;
                     
@@ -5076,6 +5076,18 @@ function refreshAllMapMarkers() {
                             refreshAllMapMarkers();
                         }
                     }
+                }
+
+                if (event.data && event.data.type === 'refresh-data') {
+                    console.log('%c[SW Message] Received refresh-data signal. Updating UI.', 'color: blue; font-weight: bold;');
+                    showToast('تراکنش بروزرسانی شد!', 'info'); // Let the user know something happened
+
+                    // Run the core refresh functions to ensure the UI is fully synced
+                    await loadDataFromServer();
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                    updateAllNotifications();
+                    refreshActiveChats();
                 }
             };
         }
