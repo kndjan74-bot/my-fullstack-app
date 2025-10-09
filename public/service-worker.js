@@ -4,10 +4,8 @@ let isTracking = false;
 const CACHE_NAME = 'soodcity-cache-v1';
 const URLS_TO_CACHE = [
     '/',
-    'index.html',
     'style.css',
     'script.js',
-    'manifest.json',
     'soodcity.jpg'
 ];
 
