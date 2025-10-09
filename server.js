@@ -4,6 +4,42 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
+const webPush = require('web-push');
+
+// ==================== تنظیمات Web Push ====================
+// کلیدهای VAPID باید در محیط واقعی از طریق متغیرهای محیطی مدیریت شوند
+const publicVapidKey = process.env.PUBLIC_VAPID_KEY || 'BNo_gideD51dMHezXPl30kAP89i16f1fqdG2hB_L5T6sT4aM7L2K2F8p1aJ_r-A-1y8a-z-H8B_y_Z-E8D9F6wY';
+const privateVapidKey = process.env.PRIVATE_VAPID_KEY || 'YOUR_PRIVATE_VAPID_KEY'; // این کلید را باید مخفی نگه دارید
+
+webPush.setVapidDetails(
+  'mailto:your-email@example.com', // یک ایمیل برای تماس
+  publicVapidKey,
+  privateVapidKey
+);
+
+// ==================== تابع کمکی برای ارسال نوتیفیکیشن ====================
+const sendPushNotification = async (userId, payload) => {
+    try {
+        const user = await User.findOne({ id: userId });
+
+        if (user && user.subscription) {
+            const notificationPayload = JSON.stringify(payload);
+            console.log(`🚀 ارسال نوتیفیکیشن به ${user.fullname}`);
+            await webPush.sendNotification(user.subscription, notificationPayload);
+            console.log(`✅ نوتیفیکیشن با موفقیت به ${user.fullname} ارسال شد.`);
+        } else {
+            console.log(`⚠️ کاربر با شناسه ${userId} یافت نشد یا اشتراک نوتیفیکیشن ندارد.`);
+        }
+    } catch (error) {
+        console.error(`❌ خطا در ارسال نوتیفیکیشن به کاربر ${userId}:`, error.body || error.message);
+        // اگر اشتراک منقضی شده باشد، آن را از دیتابیس حذف می‌کنیم
+        if (error.statusCode === 410 || error.statusCode === 404) {
+            console.log('🗑️ حذف اشتراک نامعتبر برای کاربر:', userId);
+            await User.findOneAndUpdate({ id: userId }, { $set: { subscription: null } });
+        }
+    }
+};
+
 
 const app = express();
 
@@ -49,7 +85,8 @@ const UserSchema = new mongoose.Schema({
     loadCapacity: { type: Number, default: 0 },
     dailyStatusSubmitted: { type: Boolean, default: false },
     lastStatusUpdate: { type: Date },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    subscription: { type: Object, default: null }
 });
 
 const ConnectionSchema = new mongoose.Schema({
@@ -339,20 +376,6 @@ app.post('/api/users/login', async (req, res) => {
             success: false,
             message: 'خطای سرور در ورود'
         });
-    }
-});
-
-app.post('/api/users/check-phone', async (req, res) => {
-    try {
-        const { phone } = req.body;
-        if (!phone) {
-            return res.status(400).json({ success: false, message: 'شماره تلفن ارائه نشده است' });
-        }
-        const user = await User.findOne({ phone });
-        res.json({ success: true, exists: !!user });
-    } catch (error) {
-        console.error('خطای بررسی شماره تلفن:', error);
-        res.status(500).json({ success: false, message: 'خطای سرور' });
     }
 });
 
@@ -676,6 +699,14 @@ app.post('/api/messages', auth, async (req, res) => {
 
         await newMessage.save();
 
+        // ارسال نوتیفیکیشن به گیرنده
+        const notificationPayload = {
+            title: `پیام جدید از ${senderName}`,
+            body: content || 'شما یک تصویر جدید دریافت کردید.',
+        };
+        sendPushNotification(recipientId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن پیام ناموفق بود:", err));
+
+
         res.status(201).json({
             success: true,
             message: newMessage
@@ -861,6 +892,14 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
+        // ارسال نوتیفیکیشن به مرکز سورتینگ
+        const notificationPayload = {
+            title: 'درخواست اتصال جدید',
+            body: `${sourceUser.fullname} می‌خواهد با شما متصل شود.`,
+        };
+        sendPushNotification(targetUser.id, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اتصال ناموفق بود:", err));
+
+
         res.status(201).json({
             success: true,
             connection: newConnection,
@@ -905,6 +944,14 @@ app.put('/api/connections/:id/approve', auth, async (req, res) => {
         );
 
         console.log('✅ اتصال تأیید شد:', updatedConnection.id);
+
+        // ارسال نوتیفیکیشن به کاربر درخواست‌دهنده
+        const notificationPayload = {
+            title: 'اتصال شما تایید شد',
+            body: `مرکز سورتینگ ${req.user.fullname} درخواست اتصال شما را تایید کرد.`,
+        };
+        sendPushNotification(updatedConnection.sourceId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن تایید اتصال ناموفق بود:", err));
+
 
         res.json({
             success: true,
@@ -1121,47 +1168,52 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         const requestId = parseInt(req.params.id);
         const updates = req.body;
 
-        // Find the request *before* it's updated to compare old and new statuses
+        // Get the request state *before* any updates are applied to correctly calculate capacity changes.
         const originalRequest = await Request.findOne({ id: requestId });
+        if (!originalRequest) {
+            return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
+        }
 
-        // If the status is changing, handle capacity updates
-        if (updates.status && originalRequest && updates.status !== originalRequest.status) {
+        // Handle driver capacity changes only if a driver is assigned and the status is changing.
+        if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
-
             if (driver) {
-                // Case 1: Mission is ACCEPTED (status becomes 'in_progress')
-                if (updates.status === 'in_progress' && originalRequest.status === 'assigned') {
-                    let driverUpdate = {};
+                let driverUpdate = {};
+
+                // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
+                if (updates.status === 'in_progress') {
                     if (originalRequest.type === 'empty') {
+                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
+                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
-                    if (Object.keys(driverUpdate).length > 0) {
-                        await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
+                }
+                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
+                else if (updates.status === 'completed') {
+                    if (originalRequest.type === 'empty') {
+                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                    } else if (originalRequest.type === 'full') {
+                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
+                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
+                    } else if (originalRequest.type === 'delivered_basket') {
+                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
+                        // The quantity here represents the number of missions, which equals the number of baskets.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
                     }
                 }
-                // Case 2: Mission is COMPLETED
-                else if (updates.status === 'completed' && originalRequest.status !== 'completed') {
-                    if (originalRequest.type === 'full') {
-                        // Driver delivered full baskets, so their load capacity is restored,
-                        // and they now have empty baskets to return.
-                        await User.findOneAndUpdate(
-                            { id: driver.id },
-                            { 
-                                $inc: { 
-                                    loadCapacity: originalRequest.quantity,
-                                    emptyBaskets: originalRequest.quantity
-                                } 
-                            }
-                        );
-                    }
-                    // For 'empty' type missions, the driver just delivered the empty baskets.
-                    // Their capacity doesn't change upon completion, it was already adjusted at the start.
+
+                // Apply the update to the driver if there are changes.
+                if (Object.keys(driverUpdate).length > 0) {
+                    await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
+                    console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
                 }
             }
         }
-        
+
+        // Now, update the request itself with the new data.
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             updates,
@@ -1169,11 +1221,19 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         );
 
         if (!updatedRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
+            // This case should ideally not be hit due to the check at the beginning, but it's a good safeguard.
+            return res.status(404).json({ success: false, message: 'درخواست پس از آپدیت یافت نشد' });
         }
+
+        // ارسال نوتیفیکیشن هنگام اختصاص راننده
+        if (updatedRequest.status === 'assigned' && originalRequest.status !== 'assigned') {
+            const notificationPayload = {
+                title: 'ماموریت جدید برای شما',
+                body: `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`,
+            };
+            sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
+        }
+
 
         res.json({
             success: true,
@@ -1521,6 +1581,25 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
     }
 });
 
+// بررسی وجود کاربر با شماره تلفن (بدون نیاز به احراز هویت)
+app.post('/api/users/check-phone', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'شماره تلفن الزامی است' });
+        }
+        const user = await User.findOne({ phone });
+        if (user) {
+            res.json({ success: true, exists: true });
+        } else {
+            res.json({ success: true, exists: false });
+        }
+    } catch (error) {
+        console.error('خطای بررسی شماره تلفن:', error);
+        res.status(500).json({ success: false, message: 'خطای سرور در بررسی شماره تلفن' });
+    }
+});
+
 // بازنشانی رمز عبور
 app.post('/api/users/reset-password', async (req, res) => {
     try {
@@ -1551,6 +1630,45 @@ app.post('/api/users/reset-password', async (req, res) => {
         });
     }
 });
+
+// === اشتراک نوتیفیکیشن ===
+app.post('/api/subscribe', auth, async (req, res) => {
+    try {
+        const subscription = req.body;
+        
+        // Find the user and update their subscription
+        const updatedUser = await User.findOneAndUpdate(
+            { id: req.user.id },
+            { $set: { subscription: subscription } },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, message: 'کاربر یافت نشد' });
+        }
+
+        console.log(`✅ اشتراک برای کاربر ${updatedUser.fullname} ذخیره شد.`);
+
+        // Send a confirmation push notification
+        const payload = JSON.stringify({
+            title: 'اشتراک موفق',
+            body: 'شما با موفقیت برای دریافت اعلان‌ها مشترک شدید!',
+        });
+
+        await webPush.sendNotification(subscription, payload);
+
+        res.status(201).json({ success: true, message: 'اشتراک با موفقیت ذخیره شد' });
+    } catch (error) {
+        console.error('❌ خطا در ذخیره اشتراک:', error);
+        // If the error is from webPush (e.g., subscription expired), it might have a specific status code
+        if (error.statusCode) {
+             res.status(error.statusCode).json({ success: false, message: error.body });
+        } else {
+             res.status(500).json({ success: false, message: 'خطای سرور در ذخیره اشتراک' });
+        }
+    }
+});
+
 
 // === مسیرهای دیباگ ===
 app.get('/api/debug/system', auth, async (req, res) => {
