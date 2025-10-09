@@ -8,8 +8,8 @@ const webPush = require('web-push');
 
 // ==================== تنظیمات Web Push ====================
 // کلیدهای VAPID باید در محیط واقعی از طریق متغیرهای محیطی مدیریت شوند
-const publicVapidKey = process.env.PUBLIC_VAPID_KEY || 'BNo_gideD51dMHezXPl30kAP89i16f1fqdG2hB_L5T6sT4aM7L2K2F8p1aJ_r-A-1y8a-z-H8B_y_Z-E8D9F6wY';
-const privateVapidKey = process.env.PRIVATE_VAPID_KEY || 'YOUR_PRIVATE_VAPID_KEY'; // این کلید را باید مخفی نگه دارید
+const publicVapidKey = process.env.PUBLIC_VAPID_KEY || 'BBtob9tbvIL8ROQEg_5iwoj7HwMczCn1274nfFNBU-RQ2c7Wahp9YoCrijh5vFlO704Sz_ocBgjEX54GLh7XhZE';
+const privateVapidKey = process.env.PRIVATE_VAPID_KEY || 'GaWpjdeMh_VCel7lrV2jDVYLQRVCkmA3rNjeEKfee5s'; // این کلید را باید مخفی نگه دارید
 
 webPush.setVapidDetails(
   'mailto:your-email@example.com', // یک ایمیل برای تماس
