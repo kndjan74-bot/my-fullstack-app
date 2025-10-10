@@ -5,6 +5,11 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
 const webPush = require('web-push');
+const axios = require('axios');
+
+// In-memory store for verification codes (for simplicity). 
+// In a production environment, use a more robust store like Redis.
+const verificationCodes = {}; // { phone: { code: '1234', expires: 1678886400000 } }
 
 // ==================== تنظیمات Web Push ====================
 // کلیدهای VAPID باید در محیط واقعی از طریق متغیرهای محیطی مدیریت شوند
@@ -42,6 +47,53 @@ const sendPushNotification = async (userId, payload) => {
 
 
 const app = express();
+const server = require('http').createServer(app);
+const io = require('socket.io')(server, {
+    cors: {
+        origin: "*", // در محیط واقعی باید محدودتر شود
+        methods: ["GET", "POST"]
+    }
+});
+
+let connectedUsers = {}; // { userId: socketId }
+
+io.on('connection', (socket) => {
+    console.log('🔌 یک کاربر جدید متصل شد:', socket.id);
+
+    socket.on('user_connected', (userId) => {
+        console.log(`🔗 کاربر با شناسه ${userId} به سوکت ${socket.id} متصل شد.`);
+        connectedUsers[userId] = socket.id;
+    });
+
+    socket.on('disconnect', () => {
+        console.log('🔌 کاربر قطع شد:', socket.id);
+        for (const userId in connectedUsers) {
+            if (connectedUsers[userId] === socket.id) {
+                delete connectedUsers[userId];
+                console.log(`🗑️ کاربر با شناسه ${userId} از لیست حذف شد.`);
+                break;
+            }
+        }
+    });
+});
+
+// تابع کمکی برای ارسال آپدیت به کاربران خاص
+const sendUpdateToUsers = (userIds, event, data) => {
+    if (!Array.isArray(userIds)) {
+        userIds = [userIds]; // تبدیل به آرایه اگر یک شناسه باشد
+    }
+    
+    userIds.forEach(userId => {
+        const socketId = connectedUsers[userId];
+        if (socketId) {
+            io.to(socketId).emit(event, data);
+            console.log(`🚀 ارسال آپدیت '${event}' به کاربر ${userId} در سوکت ${socketId}`);
+        } else {
+            console.log(`⚠️ سوکت برای کاربر ${userId} یافت نشد. آپدیت ارسال نشد.`);
+        }
+    });
+};
+
 
 // اتصال به MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
@@ -892,6 +944,9 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
+        // ارسال آپدیت لحظه‌ای به کاربر هدف (مرکز سورتینگ)
+        sendUpdateToUsers(newConnection.targetId, 'connection_created', newConnection);
+
         // ارسال نوتیفیکیشن به مرکز سورتینگ
         const notificationPayload = {
             title: 'درخواست اتصال جدید',
@@ -945,6 +1000,9 @@ app.put('/api/connections/:id/approve', auth, async (req, res) => {
 
         console.log('✅ اتصال تأیید شد:', updatedConnection.id);
 
+        // ارسال آپدیت لحظه‌ای به هر دو کاربر
+        sendUpdateToUsers([updatedConnection.sourceId, updatedConnection.targetId], 'connection_updated', updatedConnection);
+
         // ارسال نوتیفیکیشن به کاربر درخواست‌دهنده
         const notificationPayload = {
             title: 'اتصال شما تایید شد',
@@ -989,13 +1047,19 @@ app.put('/api/connections/:id/reject', auth, async (req, res) => {
             });
         }
 
-        await Connection.findOneAndDelete({ id: connectionId });
+        // قبل از حذف، اطلاعات اتصال را برای ارسال آپدیت نگه می‌داریم
+        const deletedConnection = await Connection.findOneAndDelete({ id: connectionId });
 
-        console.log('✅ اتصال رد شد:', connectionId);
+        console.log('✅ اتصال رد و حذف شد:', connectionId);
+
+        // ارسال آپدیت لحظه‌ای به کاربر درخواست‌دهنده
+        if (deletedConnection) {
+            sendUpdateToUsers(deletedConnection.sourceId, 'connection_rejected', { id: deletedConnection.id });
+        }
 
         res.json({
             success: true,
-            message: 'اتصال با موفقیت رد شد'
+            message: 'اتصال با موفقیت رد و حذف شد'
         });
 
     } catch (error) {
@@ -1149,6 +1213,9 @@ app.post('/api/requests', auth, async (req, res) => {
 
         await newRequest.save();
 
+        // ارسال آپدیت لحظه‌ای به مرکز سورتینگ مربوطه
+        sendUpdateToUsers(newRequest.sortingCenterId, 'request_created', newRequest);
+
         res.status(201).json({
             success: true,
             request: newRequest
@@ -1233,6 +1300,13 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             };
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
+
+        // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
+        const involvedUsers = [updatedRequest.greenhouseId, updatedRequest.sortingCenterId];
+        if (updatedRequest.driverId) {
+            involvedUsers.push(updatedRequest.driverId);
+        }
+        sendUpdateToUsers(involvedUsers, 'request_updated', updatedRequest);
 
 
         res.json({
@@ -1581,6 +1655,63 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
     }
 });
 
+// === ارسال کد تایید پیامکی ===
+app.post('/api/sms/send-verification', async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) {
+        return res.status(400).json({ success: false, message: 'شماره تلفن الزامی است' });
+    }
+
+    // Ensure user exists before sending SMS
+    const user = await User.findOne({ phone });
+    if (!user) {
+        return res.status(404).json({ success: false, message: 'کاربری با این شماره تلفن یافت نشد' });
+    }
+
+    const SMS_API_KEY = process.env.SMS_API_KEY;
+    const SMS_TEMPLATE_ID = process.env.SMS_TEMPLATE_ID || 134626; // Default template ID
+
+    if (!SMS_API_KEY) {
+        console.error('SMS_API_KEY is not defined in environment variables.');
+        return res.status(500).json({ success: false, message: 'سرویس پیامک در حال حاضر در دسترس نیست.' });
+    }
+
+    // Generate a 4-digit verification code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    const expires = Date.now() + 5 * 60 * 1000; // 5 minutes expiration
+
+    // Store the code
+    verificationCodes[phone] = { code, expires };
+
+    console.log(`Generated verification code for ${phone}: ${code}`); // For debugging
+
+    try {
+        const response = await axios.post('https://api.sms.ir/v1/send/verify', {
+            mobile: phone,
+            templateId: SMS_TEMPLATE_ID,
+            parameters: [
+                { name: 'CODE', value: code }
+            ]
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-KEY': SMS_API_KEY
+            }
+        });
+
+        if (response.data && response.data.status === 1) {
+             res.json({ success: true, message: 'کد تایید با موفقیت ارسال شد.' });
+        } else {
+             console.error('SMS API Error:', response.data);
+             res.status(500).json({ success: false, message: 'خطا در ارسال کد تایید.' });
+        }
+
+    } catch (error) {
+        console.error('Failed to send SMS via API:', error.response ? error.response.data : error.message);
+        res.status(500).json({ success: false, message: 'خطای سرور هنگام ارسال پیامک.' });
+    }
+});
+
 // بررسی وجود کاربر با شماره تلفن (بدون نیاز به احراز هویت)
 app.post('/api/users/check-phone', async (req, res) => {
     try {
@@ -1603,9 +1734,23 @@ app.post('/api/users/check-phone', async (req, res) => {
 // بازنشانی رمز عبور
 app.post('/api/users/reset-password', async (req, res) => {
     try {
-        const { phone, newPassword } = req.body;
-        const user = await User.findOne({ phone });
+        const { phone, code, newPassword } = req.body;
 
+        // --- Verification Logic ---
+        const stored = verificationCodes[phone];
+        if (!stored) {
+            return res.status(400).json({ success: false, message: 'ابتدا باید کد تایید را درخواست کنید.' });
+        }
+        if (Date.now() > stored.expires) {
+            delete verificationCodes[phone]; // Clean up expired code
+            return res.status(400).json({ success: false, message: 'کد تایید منقضی شده است. لطفاً دوباره تلاش کنید.' });
+        }
+        if (stored.code !== code) {
+            return res.status(400).json({ success: false, message: 'کد تایید نامعتبر است.' });
+        }
+        // --- End Verification Logic ---
+
+        const user = await User.findOne({ phone });
         if (!user) {
             return res.status(404).json({
                 success: false,
@@ -1616,6 +1761,8 @@ app.post('/api/users/reset-password', async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
         await user.save();
+        
+        delete verificationCodes[phone]; // Clean up used code
 
         res.json({
             success: true,

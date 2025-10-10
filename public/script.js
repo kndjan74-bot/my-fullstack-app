@@ -742,14 +742,25 @@
                     api.getAllMessages()
                 ]);
 
-                // The _fetch helper returns { success: false, ... } on any error, including 401.
+                // The _fetch helper now returns an `isAuthError` flag for 401 errors.
                 const results = [usersRes, requestsRes, adsRes, connectionsRes, messagesRes];
-                if (results.some(res => !res.success)) {
-                    const errorResult = results.find(res => !res.success);
-                    showToast(errorResult.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                const authError = results.find(res => res.isAuthError);
+
+                if (authError) {
+                    // If any of the calls resulted in a 401, log the user out.
+                    showToast(authError.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
                     await logout();
-                    return;
+                    return; // Stop further execution
                 }
+
+                // For other non-critical errors, we can just log them without logging out.
+                results.forEach(res => {
+                    if (!res.success) {
+                        console.warn('A non-critical API call failed:', res.message);
+                        // Optionally show a less intrusive toast for these errors
+                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
+                    }
+                });
 
                 // Assuming the backend nests array responses within a key, e.g., { users: [...] }
                 // This aligns with how the login response provides a 'user' object.
@@ -795,8 +806,12 @@ const API_BASE_URL = getApiBaseUrl();
                 }
 
                 try {
-                    const response = await fetch(url, { ...options, headers });
+                    const response = await fetch(url, { ...options, headers, cache: 'no-cache' });
                     if (!response.ok) {
+                        // If the error is a 401 Unauthorized, we return a specific flag.
+                        if (response.status === 401) {
+                            return { success: false, message: 'نشست شما منقضی شده است.', isAuthError: true };
+                        }
                         const data = await response.json();
                         console.error(`API error: ${response.status} - ${data.message || 'Unknown error'}`);
                         return { success: false, message: data.message || `خطای سرور: ${response.status}` };
@@ -838,9 +853,11 @@ const API_BASE_URL = getApiBaseUrl();
             async updateUser(updates) {
                 return this._fetch(`${API_BASE_URL}/users`, { method: 'PUT', body: JSON.stringify(updates) });
             },
-            async resetPassword(phone, newPassword) {
-                // This endpoint needs to be implemented on the backend
-                return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, newPassword }) });
+            async sendVerificationSms(phone) {
+                return this._fetch(`${API_BASE_URL}/sms/send-verification`, { method: 'POST', body: JSON.stringify({ phone }) });
+            },
+            async resetPassword(phone, code, newPassword) {
+                return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, code, newPassword }) });
             },
              async checkUserExists(phone) {
                 return this._fetch(`${API_BASE_URL}/users/check-phone`, { method: 'POST', body: JSON.stringify({ phone }) });
@@ -1149,103 +1166,48 @@ const API_BASE_URL = getApiBaseUrl();
                 return;
             }
 
-            // No longer calls loadDataFromServer, which required authentication.
-            const response = await api.checkUserExists(phone);
+            // This now calls the secure server endpoint.
+            const response = await api.sendVerificationSms(phone);
 
-            if (response.success && response.exists) {
-                // User exists, proceed with sending the verification SMS.
-                await sendVerificationSms(phone);
-
+            if (response.success) {
+                showToast(response.message || 'کد تایید ارسال شد.', 'success');
                 // Show the next step in the UI
                 document.getElementById('recovery-phone-display').textContent = phone;
                 document.getElementById('recovery-step-1').classList.add('hidden');
                 document.getElementById('recovery-step-2').classList.remove('hidden');
                 document.getElementById('recovery-result').classList.add('hidden'); // Ensure result is hidden
             } else {
-                // Handle cases where the API call fails or the user doesn't exist
-                showToast(response.message || 'کاربری با این شماره تلفن یافت نشد', 'error');
+                // The server now handles user existence checks and other errors.
+                showToast(response.message || 'خطا در ارسال کد تایید.', 'error');
             }
         }
 
-        async function sendVerificationSms(phoneNumber) {
-            // This is a placeholder for your actual API call.
-            // The user needs to replace the placeholders with their actual data.
-            console.log(`Simulating sending SMS to ${phoneNumber}`);
-
-            const API_ENDPOINT_URL = 'https://api.sms.ir/v1/send/verify'; // As per user's PHP example
-            const YOUR_API_KEY = 'eCGjVdVxsFTHy9oNhTmpMC0e3R11dXkWPSbmmnMAC5u5Cbeb'; // User must replace this
-            const YOUR_TEMPLATE_ID = 134626; // As per user's PHP example
-
-            // For simulation, we generate a code here. In a real app, the backend generates and stores it.
-            const verificationCode = Math.floor(1000 + Math.random() * 9000);
-            // We'll store it in a temporary global variable for the next step.
-            window.tempVerificationCode = verificationCode.toString();
-            console.log(`Generated verification code: ${window.tempVerificationCode}`);
-
-
-            
-            // --- UNCOMMENT THIS SECTION TO USE THE REAL API CALL ---
-            
-            const payload = {
-                mobile: phoneNumber,
-                templateId: YOUR_TEMPLATE_ID,
-                parameters: [
-                    { name: 'CODE', value: verificationCode.toString() }
-                ]
-            };
-
-            try {
-                const response = await fetch(API_ENDPOINT_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        // sms.ir typically uses a custom header like 'X-API-KEY'.
-                        // The user must confirm the correct header from their provider's documentation.
-                        'X-API-KEY': YOUR_API_KEY 
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    // If the API call fails, show an error and stop.
-                    showToast('خطا در ارسال کد تایید. لطفاً دوباره تلاش کنید.', 'error');
-                    throw new Error(`API call failed with status: ${response.status}`);
-                }
-
-                const result = await response.json();
-                console.log('SMS API Response:', result);
-                showToast('کد تایید با موفقیت ارسال شد.', 'success');
-
-            } catch (error) {
-                console.error('Failed to send SMS:', error);
-                // Even if the API fails, we continue in this simulation. 
-                // In a real app, you might want to stop the user from proceeding.
-            }
-            
-        }
+        // This function is now removed as it is handled by the server.
 
         async function verifyRecoveryCode(event) {
             event.preventDefault();
             const enteredCode = document.getElementById('recovery-code').value;
             const phone = document.getElementById('recovery-phone').value; // Get the phone number again
 
-            // In a real app, the server would verify the code. Here we simulate it.
-            if (enteredCode === window.tempVerificationCode) {
-                const newPassword = generateSecurePassword();
-                const response = await api.resetPassword(phone, newPassword);
+            if (!enteredCode) {
+                showToast('لطفاً کد تایید را وارد کنید.', 'error');
+                return;
+            }
 
-                if (response.success) {
-                    // Hide the verification form and show the result
-                    document.getElementById('recovery-step-2').classList.add('hidden');
-                    document.getElementById('new-password').textContent = newPassword;
-                    document.getElementById('recovery-result').classList.remove('hidden');
+            const newPassword = generateSecurePassword();
+            // The API call now includes the code for server-side verification.
+            const response = await api.resetPassword(phone, enteredCode, newPassword);
 
-                    showToast('رمز عبور با موفقیت بازیابی شد.', 'success');
-                } else {
-                    showToast(response.message || 'خطا در بازیابی رمز عبور.', 'error');
-                }
+            if (response.success) {
+                // Hide the verification form and show the result
+                document.getElementById('recovery-step-2').classList.add('hidden');
+                document.getElementById('new-password').textContent = newPassword;
+                document.getElementById('recovery-result').classList.remove('hidden');
+
+                showToast('رمز عبور با موفقیت بازیابی شد.', 'success');
             } else {
-                showToast('کد تایید وارد شده صحیح نیست.', 'error');
+                // Display the error message from the server (e.g., "Invalid code").
+                showToast(response.message || 'خطا در تایید کد.', 'error');
             }
         }
 
@@ -4823,20 +4785,26 @@ function refreshAllMapMarkers() {
             }
         }
 
-        function refreshDataPeriodically() {
-            if (isNavigating) return; // Halt refresh during any navigation
-
-            if (currentUser && !isFormActive) { // Do not refresh if a form element is active
-                loadDataFromServer(); // Load latest data from storage
-                checkForNewNotifications(); // Check for new items and trigger notifications
-                loadPanelData();
-                refreshAllMapMarkers(); // Refresh map markers for all users
-                updateAllNotifications();
-                refreshActiveChats();
-
-                // After all UI is updated, take a new snapshot for the next cycle.
-                updateDataSnapshot();
+        async function refreshDataPeriodically() {
+            if (isNavigating || !currentUser || isFormActive) {
+                return; // Halt refresh during navigation, if logged out, or if a form is active
             }
+
+            // Await the data fetching to ensure we have the latest info before re-rendering.
+            await loadDataFromServer(); 
+
+            // If logout was triggered during fetch, currentUser will be null.
+            if (!currentUser) return; 
+
+            // Now that we have fresh data, update the UI.
+            checkForNewNotifications(); 
+            loadPanelData();
+            refreshAllMapMarkers(); 
+            updateAllNotifications();
+            refreshActiveChats();
+
+            // After all UI is updated, take a new snapshot for the next cycle.
+            updateDataSnapshot();
         }
         
         setInterval(refreshDataPeriodically, 2000); // 2 seconds
