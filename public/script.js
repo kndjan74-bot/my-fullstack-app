@@ -32,12 +32,14 @@
             landingPage.style.display = 'none';
             authScreen.style.display = 'none';
             mainApp.style.display = 'none';
-            bottomNav.classList.add('hidden'); // Hide nav by default
-            mainApp.style.paddingBottom = '0'; // Reset padding
-            loginForm.style.display = 'none';
-            registerForm.style.display = 'none';
-            recoveryForm.style.display = 'none';
+            bottomNav.classList.add('hidden');
+            mainApp.style.paddingBottom = '0';
             
+            // Instead of display, we toggle the 'hidden' class for the forms
+            loginForm.classList.add('hidden');
+            registerForm.classList.add('hidden');
+            recoveryForm.classList.add('hidden');
+
             document.body.className = ''; // Clear body classes
 
             switch(state) {
@@ -47,23 +49,23 @@
                     break;
                 case UI_STATES.AUTH_LOGIN:
                     authScreen.style.display = 'flex';
-                    loginForm.style.display = 'block';
+                    loginForm.classList.remove('hidden');
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_REGISTER:
                     authScreen.style.display = 'flex';
-                    registerForm.style.display = 'block';
+                    registerForm.classList.remove('hidden');
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_RECOVERY:
                     authScreen.style.display = 'flex';
-                    recoveryForm.style.display = 'block';
+                    recoveryForm.classList.remove('hidden');
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.MAIN_APP:
                     mainApp.style.display = 'block';
-                    bottomNav.classList.remove('hidden'); // Show nav for main app
-                    mainApp.style.paddingBottom = '80px'; // Add padding for nav
+                    bottomNav.classList.remove('hidden');
+                    mainApp.style.paddingBottom = '80px';
                     document.body.className = 'bg-gray-100';
                     break;
             }
@@ -401,6 +403,8 @@
         let connections = [];
         let isFormActive = false; // Flag to prevent UI refresh when a form element is active
         let isNavigating = false; // Flag to pause refresh during any navigation
+let isRefreshing = false; // New flag to prevent parallel refreshes
+let refreshIntervalId = null; // To hold the ID of the refresh interval
         const orsApiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImIxMGZlYjc0NjIwMzQzOWE5ZDg0OGVjZGZiMTNjZmRlIiwiaCI6Im11cm11cjY0In0=';
 
         // Map layer management
@@ -758,18 +762,17 @@
                     if (!res.success) {
                         console.warn('A non-critical API call failed:', res.message);
                         // Optionally show a less intrusive toast for these errors
-                        showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
+                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
                     }
                 });
 
                 // Assuming the backend nests array responses within a key, e.g., { users: [...] }
                 // This aligns with how the login response provides a 'user' object.
-                users = usersRes.success ? usersRes.users || [] : users;
-                requests = requestsRes.success ? requestsRes.requests || [] : requests;
-                const allAds = adsRes.success ? adsRes.ads || [] : [...supplyAds, ...demandAds];
-                connections = connectionsRes.success ? connectionsRes.connections || [] : connections;
-                messages = messagesRes.success ? messagesRes.messages || [] : messages;
-
+                users = usersRes.users || [];
+                requests = requestsRes.requests || [];
+                const allAds = adsRes.ads || [];
+                connections = connectionsRes.connections || [];
+                messages = messagesRes.messages || [];
 
                 supplyAds = allAds.filter(ad => ad.adType === 'supply');
                 demandAds = allAds.filter(ad => ad.adType === 'demand');
@@ -1352,6 +1355,13 @@ const API_BASE_URL = getApiBaseUrl();
         }
 
         async function logout() {
+    // Clear the refresh interval when the user logs out
+    if (refreshIntervalId) {
+        clearInterval(refreshIntervalId);
+        refreshIntervalId = null;
+        console.log('Periodic refresh stopped on logout.');
+    }
+
             if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage('stop-tracking');
             }
@@ -2382,6 +2392,13 @@ function refreshAllMapMarkers() {
             
             // Check for application updates
             checkForAppUpdates();
+
+            // Start the periodic refresh only after a successful login.
+            if (refreshIntervalId) {
+                clearInterval(refreshIntervalId); // Clear any existing interval
+            }
+            refreshIntervalId = setInterval(refreshDataPeriodically, 10000); // 10 seconds
+            console.log(`Periodic refresh started with interval ID ${refreshIntervalId}.`);
         }
 
         function getRoleTitle(role) {
@@ -4787,28 +4804,46 @@ function refreshAllMapMarkers() {
         }
 
         async function refreshDataPeriodically() {
-            if (isNavigating || !currentUser || isFormActive) {
-                return; // Halt refresh during navigation, if logged out, or if a form is active
+    // Halt refresh if navigating, logged out, a form is active, or another refresh is already in progress.
+    if (isNavigating || !currentUser || isFormActive || isRefreshing) {
+        return;
             }
 
-            // Await the data fetching to ensure we have the latest info before re-rendering.
-            await loadDataFromServer(); 
+    isRefreshing = true; // Set the flag to prevent parallel execution
+    try {
+        console.log("🔄 Starting periodic data refresh...");
+        await loadDataFromServer(); 
 
-            // If logout was triggered during fetch, currentUser will be null.
-            if (!currentUser) return; 
+        // If logout was triggered during fetch, currentUser will be null.
+        if (!currentUser) {
+            console.log("User logged out, stopping refresh cycle.");
+            if (refreshIntervalId) {
+                clearInterval(refreshIntervalId);
+                refreshIntervalId = null;
+            }
+            return; 
+        }
 
-            // Now that we have fresh data, update the UI.
-            checkForNewNotifications(); 
-            loadPanelData();
-            refreshAllMapMarkers(); 
-            updateAllNotifications();
-            refreshActiveChats();
+        // Now that we have fresh data, update the UI.
+        console.log("🎨 Rendering UI with new data...");
+        checkForNewNotifications(); 
+        loadPanelData();
+        refreshAllMapMarkers(); 
+        updateAllNotifications();
+        refreshActiveChats();
 
-            // After all UI is updated, take a new snapshot for the next cycle.
-            updateDataSnapshot();
+        // After all UI is updated, take a new snapshot for the next cycle.
+        updateDataSnapshot();
+        console.log("✅ Periodic refresh complete.");
+
+    } catch (error) {
+        console.error("Error during periodic refresh:", error);
+    } finally {
+        isRefreshing = false; // Always reset the flag
+    }
         }
         
-        setInterval(refreshDataPeriodically, 2000); // 2 seconds
+// The refresh interval is now started in showMainApp and cleared on logout.
         setInterval(cleanupOldNotifications, 60 * 60 * 1000); // Every hour
 
 

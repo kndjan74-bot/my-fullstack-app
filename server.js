@@ -50,29 +50,42 @@ const app = express();
 const server = require('http').createServer(app);
 const io = require('socket.io')(server, {
     cors: {
-        origin: "*", // در محیط واقعی باید محدودتر شود
+        origin: "*",
         methods: ["GET", "POST"]
-    }
+    },
+    pingTimeout: 60000, // 60 ثانیه
+    pingInterval: 25000 // 25 ثانیه
 });
 
-let connectedUsers = {}; // { userId: socketId }
+let connectedUsers = {}; // { userId: { socketId: '...', socket: ... } }
 
 io.on('connection', (socket) => {
     console.log('🔌 یک کاربر جدید متصل شد:', socket.id);
 
     socket.on('user_connected', (userId) => {
+        // اگر کاربر از قبل در یک سوکت دیگر متصل است، اتصال قبلی را قطع کن
+        if (connectedUsers[userId] && connectedUsers[userId].socketId !== socket.id) {
+            console.log(`🔌 کاربر ${userId} از قبل در سوکت ${connectedUsers[userId].socketId} متصل بود. قطع اتصال قبلی...`);
+            const oldSocket = connectedUsers[userId].socket;
+            if (oldSocket) {
+                oldSocket.disconnect(true);
+            }
+        }
+        
         console.log(`🔗 کاربر با شناسه ${userId} به سوکت ${socket.id} متصل شد.`);
-        connectedUsers[userId] = socket.id;
+        connectedUsers[userId] = { socketId: socket.id, socket: socket };
+        socket.userId = userId; // یک شناسه به سوکت اضافه می‌کنیم برای دسترسی آسان‌تر
     });
 
     socket.on('disconnect', () => {
-        console.log('🔌 کاربر قطع شد:', socket.id);
-        for (const userId in connectedUsers) {
-            if (connectedUsers[userId] === socket.id) {
-                delete connectedUsers[userId];
-                console.log(`🗑️ کاربر با شناسه ${userId} از لیست حذف شد.`);
-                break;
-            }
+        // از شناسه ذخیره شده روی سوکت برای حذف استفاده می‌کنیم
+        const userId = socket.userId;
+        if (userId && connectedUsers[userId] && connectedUsers[userId].socketId === socket.id) {
+             console.log(`🔌 کاربر ${userId} با سوکت ${socket.id} قطع شد.`);
+             delete connectedUsers[userId];
+             console.log(`🗑️ کاربر با شناسه ${userId} از لیست حذف شد.`);
+        } else {
+             console.log(`🔌 یک سوکت ناشناس (${socket.id}) قطع شد.`);
         }
     });
 });
@@ -80,14 +93,14 @@ io.on('connection', (socket) => {
 // تابع کمکی برای ارسال آپدیت به کاربران خاص
 const sendUpdateToUsers = (userIds, event, data) => {
     if (!Array.isArray(userIds)) {
-        userIds = [userIds]; // تبدیل به آرایه اگر یک شناسه باشد
+        userIds = [userIds];
     }
     
     userIds.forEach(userId => {
-        const socketId = connectedUsers[userId];
-        if (socketId) {
-            io.to(socketId).emit(event, data);
-            console.log(`🚀 ارسال آپدیت '${event}' به کاربر ${userId} در سوکت ${socketId}`);
+        const userConnection = connectedUsers[userId];
+        if (userConnection && userConnection.socketId) {
+            io.to(userConnection.socketId).emit(event, data);
+            console.log(`🚀 ارسال آپدیت '${event}' به کاربر ${userId} در سوکت ${userConnection.socketId}`);
         } else {
             console.log(`⚠️ سوکت برای کاربر ${userId} یافت نشد. آپدیت ارسال نشد.`);
         }
@@ -1241,23 +1254,41 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
-        // Handle driver capacity changes only when a mission is completed.
-        if (originalRequest.driverId && updates.status === 'completed' && originalRequest.status !== 'completed') {
+        // Handle driver capacity changes only if a driver is assigned and the status is changing.
+        if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
 
-                // New simplified logic: Only decrement capacity upon completion.
-                if (originalRequest.type === 'empty') {
-                    driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
-                } else if (originalRequest.type === 'full') {
-                    driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
+                if (updates.status === 'in_progress') {
+                    if (originalRequest.type === 'empty') {
+                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
+                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                    } else if (originalRequest.type === 'full') {
+                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
+                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                    }
+                }
+                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
+                else if (updates.status === 'completed') {
+                    if (originalRequest.type === 'empty') {
+                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                    } else if (originalRequest.type === 'full') {
+                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
+                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
+                    } else if (originalRequest.type === 'delivered_basket') {
+                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
+                        // The quantity here represents the number of missions, which equals the number of baskets.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                    }
                 }
 
                 // Apply the update to the driver if there are changes.
                 if (Object.keys(driverUpdate).length > 0) {
                     await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
-                    console.log(`✅ ظرفیت راننده ${driver.fullname} پس از اتمام ماموریت آپدیت شد:`, driverUpdate);
+                    console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
                 }
             }
         }
