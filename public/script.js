@@ -378,7 +378,6 @@
         }
 
         // Global Variables
-        let socket = null;
         let tabId;
         let currentUser = null; // Will be set after loading all users from storage
         let users = [];
@@ -780,7 +779,7 @@
             }
         }
 
-     // --- API ---
+        // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -1352,9 +1351,6 @@ const API_BASE_URL = getApiBaseUrl();
         }
 
         async function logout() {
-            if (socket) {
-                socket.disconnect();
-            }
             if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage('stop-tracking');
             }
@@ -2323,97 +2319,6 @@ function refreshAllMapMarkers() {
         }
 
         // Main App Functions
-        function initializeWebSocket() {
-            // Disconnect any existing socket
-            if (socket) {
-                socket.disconnect();
-            }
-
-            const SOCKET_URL = 'https://soodcity.liara.run'; 
-            socket = io(SOCKET_URL, {
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-            });
-
-            socket.on('connect', () => {
-                console.log('🔌 Connected to WebSocket server!');
-                if (currentUser) {
-                    socket.emit('user_connected', currentUser.id);
-                }
-            });
-
-            socket.on('disconnect', () => {
-                console.log('🔌 Disconnected from WebSocket server.');
-            });
-
-            socket.on('connect_error', (error) => {
-                console.error('WebSocket connection error:', error);
-            });
-
-            // --- Real-time Event Listeners ---
-
-            socket.on('connection_updated', (updatedConnection) => {
-                console.log('Received connection_updated:', updatedConnection);
-                const index = connections.findIndex(c => c.id === updatedConnection.id);
-                if (index !== -1) {
-                    connections[index] = updatedConnection;
-                } else {
-                    connections.push(updatedConnection);
-                }
-                loadPanelData();
-                updateAllNotifications();
-            });
-            
-            socket.on('connection_created', (newConnection) => {
-                console.log('Received connection_created:', newConnection);
-                connections.push(newConnection);
-                loadPanelData();
-                updateAllNotifications();
-            });
-
-            socket.on('connection_deleted', (deletedData) => {
-                console.log('Received connection_deleted:', deletedData);
-                connections = connections.filter(c => c.id !== deletedData.id);
-                loadPanelData();
-                updateAllNotifications();
-            });
-            
-            socket.on('connection_rejected', (rejectedData) => {
-                console.log('Received connection_rejected:', rejectedData);
-                connections = connections.filter(c => c.id !== rejectedData.id);
-                loadPanelData();
-                updateAllNotifications();
-            });
-
-            socket.on('request_updated', (updatedRequest) => {
-                console.log('Received request_updated:', updatedRequest);
-                const index = requests.findIndex(r => r.id === updatedRequest.id);
-                if (index !== -1) {
-                    requests[index] = updatedRequest;
-                } else {
-                    requests.push(updatedRequest);
-                }
-                loadPanelData();
-                updateAllNotifications();
-                refreshAllMapMarkers();
-            });
-            
-            socket.on('request_created', (newRequest) => {
-                console.log('Received request_created:', newRequest);
-                requests.push(newRequest);
-                loadPanelData();
-                updateAllNotifications();
-            });
-
-            socket.on('request_deleted', (deletedData) => {
-                console.log('Received request_deleted:', deletedData);
-                requests = requests.filter(r => r.id !== deletedData.id);
-                loadPanelData();
-                updateAllNotifications();
-                refreshAllMapMarkers();
-            });
-        }
-
         async function showMainApp() {
             // Defensive check to prevent errors if currentUser is null or lacks a role
             if (!currentUser || !currentUser.role) {
@@ -2424,8 +2329,6 @@ function refreshAllMapMarkers() {
 
             updateUiState(UI_STATES.MAIN_APP);
             
-            initializeWebSocket(); // Initialize WebSocket connection
-
             if (!sessionStorage.getItem('disclaimer_shown_this_session')) {
                 showDisclaimerModal();
             }
@@ -4904,8 +4807,7 @@ function refreshAllMapMarkers() {
             updateDataSnapshot();
         }
         
-        // The polling mechanism is now replaced by WebSockets.
-        // setInterval(refreshDataPeriodically, 2000); 
+        setInterval(refreshDataPeriodically, 2000); // 2 seconds
         setInterval(cleanupOldNotifications, 60 * 60 * 1000); // Every hour
 
 

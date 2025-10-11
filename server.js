@@ -50,18 +50,10 @@ const app = express();
 const server = require('http').createServer(app);
 const io = require('socket.io')(server, {
     cors: {
-        origin: "*", // In a real environment, this should be more restrictive
+        origin: "*", // در محیط واقعی باید محدودتر شود
         methods: ["GET", "POST"]
     }
 });
-
-// اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => console.log('✅ متصل به MongoDB شد'))
-.catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
 let connectedUsers = {}; // { userId: socketId }
 
@@ -101,6 +93,15 @@ const sendUpdateToUsers = (userIds, event, data) => {
         }
     });
 };
+
+
+// اتصال به MongoDB
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('✅ متصل به MongoDB شد'))
+.catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
 // ==================== مدل شمارنده برای ID عددی ====================
 const CounterSchema = new mongoose.Schema({
@@ -1100,11 +1101,6 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             { new: true }
         );
 
-        // Send real-time update to both users in the connection
-        if (updatedConnection) {
-            sendUpdateToUsers([updatedConnection.sourceId, updatedConnection.targetId], 'connection_updated', updatedConnection);
-        }
-
         res.json({
             success: true,
             connection: updatedConnection
@@ -1138,12 +1134,7 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        const deletedConnection = await Connection.findOneAndDelete({ id: connectionId });
-
-        if (deletedConnection) {
-            // Notify both users that the connection has been deleted
-            sendUpdateToUsers([deletedConnection.sourceId, deletedConnection.targetId], 'connection_deleted', { id: deletedConnection.id });
-        }
+        await Connection.findOneAndDelete({ id: connectionId });
 
         res.json({
             success: true,
@@ -1250,41 +1241,23 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
-        // Handle driver capacity changes only if a driver is assigned and the status is changing.
-        if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
+        // Handle driver capacity changes only when a mission is completed.
+        if (originalRequest.driverId && updates.status === 'completed' && originalRequest.status !== 'completed') {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
 
-                // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
-                if (updates.status === 'in_progress') {
-                    if (originalRequest.type === 'empty') {
-                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
-                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
-                    } else if (originalRequest.type === 'full') {
-                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
-                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
-                    }
-                }
-                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
-                else if (updates.status === 'completed') {
-                    if (originalRequest.type === 'empty') {
-                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
-                    } else if (originalRequest.type === 'full') {
-                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
-                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
-                    } else if (originalRequest.type === 'delivered_basket') {
-                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
-                        // The quantity here represents the number of missions, which equals the number of baskets.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
-                    }
+                // New simplified logic: Only decrement capacity upon completion.
+                if (originalRequest.type === 'empty') {
+                    driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                } else if (originalRequest.type === 'full') {
+                    driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                 }
 
                 // Apply the update to the driver if there are changes.
                 if (Object.keys(driverUpdate).length > 0) {
                     await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
-                    console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
+                    console.log(`✅ ظرفیت راننده ${driver.fullname} پس از اتمام ماموریت آپدیت شد:`, driverUpdate);
                 }
             }
         }
@@ -1351,15 +1324,7 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        const deletedRequest = await Request.findOneAndDelete({ id: requestId });
-
-        if (deletedRequest) {
-            const involvedUsers = [deletedRequest.greenhouseId, deletedRequest.sortingCenterId];
-            if (deletedRequest.driverId) {
-                involvedUsers.push(deletedRequest.driverId);
-            }
-            sendUpdateToUsers(involvedUsers, 'request_deleted', { id: deletedRequest.id });
-        }
+        await Request.findOneAndDelete({ id: requestId });
 
         res.json({
             success: true,
@@ -1923,7 +1888,7 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
