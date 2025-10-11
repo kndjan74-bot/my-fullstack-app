@@ -758,17 +758,18 @@
                     if (!res.success) {
                         console.warn('A non-critical API call failed:', res.message);
                         // Optionally show a less intrusive toast for these errors
-                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
+                        showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
                     }
                 });
 
                 // Assuming the backend nests array responses within a key, e.g., { users: [...] }
                 // This aligns with how the login response provides a 'user' object.
-                users = usersRes.users || [];
-                requests = requestsRes.requests || [];
-                const allAds = adsRes.ads || [];
-                connections = connectionsRes.connections || [];
-                messages = messagesRes.messages || [];
+                users = usersRes.success ? usersRes.users || [] : users;
+                requests = requestsRes.success ? requestsRes.requests || [] : requests;
+                const allAds = adsRes.success ? adsRes.ads || [] : [...supplyAds, ...demandAds];
+                connections = connectionsRes.success ? connectionsRes.connections || [] : connections;
+                messages = messagesRes.success ? messagesRes.messages || [] : messages;
+
 
                 supplyAds = allAds.filter(ad => ad.adType === 'supply');
                 demandAds = allAds.filter(ad => ad.adType === 'demand');
@@ -2096,7 +2097,7 @@ function refreshAllMapMarkers() {
                 updateBadge('sorting-incoming-deliveries-badge', unseenIncomingDeliveries.length);
                 totalUnreadCount += unseenIncomingDeliveries.length;
 
-            } else if (role === 'driver') {
+            } else if (currentUser.role === 'driver') {
                 // Pending assignments
                 const pendingAssignments = requests.filter(r => r.driverId === currentUser.id && r.status === 'assigned');
                 bellNotificationCount += pendingAssignments.length;
@@ -2789,7 +2790,7 @@ function refreshAllMapMarkers() {
                 const formHtml = `
                     <div class="flex items-center space-x-2 space-x-reverse border-b pb-4 mb-4">
                         <select id="greenhouse-sorting-center-select" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500 bg-white">
-                            <option value="">انتخاب مرکز سورتینگ...</option>
+                            <!-- Options populated by JS -->
                         </select>
                         <button onclick="requestGreenhouseConnection()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg whitespace-nowrap">
                             <i class="fas fa-plus ml-2"></i>
@@ -2797,7 +2798,7 @@ function refreshAllMapMarkers() {
                         </button>
                     </div>
                     <div id="greenhouse-current-connections" class="space-y-3">
-                        <!-- List will be populated below -->
+                        <!-- List populated by JS -->
                     </div>
                 `;
                 container.innerHTML = formHtml;
@@ -3126,7 +3127,7 @@ function refreshAllMapMarkers() {
             if (request) {
                 const response = await api.deleteRequest(requestId);
                 if (response.success) {
-                    // Server should notify greenhouse.
+                    // Server should notify sorting center.
                     showToast('درخواست با موفقیت رد شد.', 'success');
                     await loadDataFromServer();
                     loadSortingRequests();
@@ -4390,7 +4391,7 @@ function refreshAllMapMarkers() {
                     });
                 });
 
-            } else if (role === 'driver') {
+            } else if (currentUser.role === 'driver') {
                 // Pending assignments
                 const pendingAssignments = requests.filter(r => r.driverId === currentUser.id && r.status === 'assigned');
                 pendingAssignments.forEach(req => {
