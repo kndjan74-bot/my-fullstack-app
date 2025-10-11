@@ -50,10 +50,18 @@ const app = express();
 const server = require('http').createServer(app);
 const io = require('socket.io')(server, {
     cors: {
-        origin: "*", // در محیط واقعی باید محدودتر شود
+        origin: "*", // In a real environment, this should be more restrictive
         methods: ["GET", "POST"]
     }
 });
+
+// اتصال به MongoDB
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log('✅ متصل به MongoDB شد'))
+.catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
 let connectedUsers = {}; // { userId: socketId }
 
@@ -93,15 +101,6 @@ const sendUpdateToUsers = (userIds, event, data) => {
         }
     });
 };
-
-
-// اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
-.then(() => console.log('✅ متصل به MongoDB شد'))
-.catch(err => console.error('❌ خطای اتصال به MongoDB:', err));
 
 // ==================== مدل شمارنده برای ID عددی ====================
 const CounterSchema = new mongoose.Schema({
@@ -1101,6 +1100,11 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             { new: true }
         );
 
+        // Send real-time update to both users in the connection
+        if (updatedConnection) {
+            sendUpdateToUsers([updatedConnection.sourceId, updatedConnection.targetId], 'connection_updated', updatedConnection);
+        }
+
         res.json({
             success: true,
             connection: updatedConnection
@@ -1134,7 +1138,12 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
             });
         }
 
-        await Connection.findOneAndDelete({ id: connectionId });
+        const deletedConnection = await Connection.findOneAndDelete({ id: connectionId });
+
+        if (deletedConnection) {
+            // Notify both users that the connection has been deleted
+            sendUpdateToUsers([deletedConnection.sourceId, deletedConnection.targetId], 'connection_deleted', { id: deletedConnection.id });
+        }
 
         res.json({
             success: true,
@@ -1342,7 +1351,15 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
-        await Request.findOneAndDelete({ id: requestId });
+        const deletedRequest = await Request.findOneAndDelete({ id: requestId });
+
+        if (deletedRequest) {
+            const involvedUsers = [deletedRequest.greenhouseId, deletedRequest.sortingCenterId];
+            if (deletedRequest.driverId) {
+                involvedUsers.push(deletedRequest.driverId);
+            }
+            sendUpdateToUsers(involvedUsers, 'request_deleted', { id: deletedRequest.id });
+        }
 
         res.json({
             success: true,
@@ -1906,7 +1923,7 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);
