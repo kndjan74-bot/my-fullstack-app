@@ -796,7 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-            // --- API ---
+         // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2993,11 +2993,8 @@ function refreshAllMapMarkers() {
 
         async function confirmSecondStep(requestId) {
             const request = requests.find(r => r.id === requestId);
-            
-            const canProceed = (request.type === 'empty' && request.isPickupConfirmed) || 
-                               (request.type === 'full' && request.receiverAcknowledged);
 
-            if (request && canProceed) {
+            if (request && request.isPickupConfirmed) {
                 const updates = {
                     status: 'completed',
                     completedAt: new Date().toISOString(),
