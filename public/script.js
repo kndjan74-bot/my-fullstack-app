@@ -758,55 +758,6 @@ socket.on('reconnect', () => {
             }
         });
 
-        async function loadDataFromServer() {
-            console.log('Getting initial data from server...');
-            try {
-                // Use the new API getter methods for consistency and centralized logic.
-                const [usersRes, requestsRes, adsRes, connectionsRes, messagesRes] = await Promise.all([
-                    api.getAllUsers(),
-                    api.getAllRequests(),
-                    api.getAllAds(),
-                    api.getAllConnections(),
-                    api.getAllMessages()
-                ]);
-
-                // The _fetch helper now returns an `isAuthError` flag for 401 errors.
-                const results = [usersRes, requestsRes, adsRes, connectionsRes, messagesRes];
-                const authError = results.find(res => res.isAuthError);
-
-                if (authError) {
-                    // If any of the calls resulted in a 401, log the user out.
-                    showToast(authError.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
-                    await logout();
-                    return; // Stop further execution
-                }
-
-                // For other non-critical errors, we can just log them without logging out.
-                results.forEach(res => {
-                    if (!res.success) {
-                        console.warn('A non-critical API call failed:', res.message);
-                        // Optionally show a less intrusive toast for these errors
-                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
-                    }
-                });
-
-                // Assuming the backend nests array responses within a key, e.g., { users: [...] }
-                // This aligns with how the login response provides a 'user' object.
-                users = usersRes.users || [];
-                requests = requestsRes.requests || [];
-                const allAds = adsRes.ads || [];
-                connections = connectionsRes.connections || [];
-                messages = messagesRes.messages || [];
-
-                supplyAds = allAds.filter(ad => ad.adType === 'supply');
-                demandAds = allAds.filter(ad => ad.adType === 'demand');
-
-            } catch (error) {
-                console.error("Failed to load data from server:", error);
-                showToast('خطا در بارگذاری اطلاعات از سرور.', 'error');
-            }
-        }
-
       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
@@ -1028,6 +979,55 @@ const API_BASE_URL = getApiBaseUrl();
 
 
         // --- End API ---
+
+        async function loadDataFromServer() {
+            console.log('Getting initial data from server...');
+            try {
+                // Use the new API getter methods for consistency and centralized logic.
+                const [usersRes, requestsRes, adsRes, connectionsRes, messagesRes] = await Promise.all([
+                    api.getAllUsers(),
+                    api.getAllRequests(),
+                    api.getAllAds(),
+                    api.getAllConnections(),
+                    api.getAllMessages()
+                ]);
+
+                // The _fetch helper now returns an `isAuthError` flag for 401 errors.
+                const results = [usersRes, requestsRes, adsRes, connectionsRes, messagesRes];
+                const authError = results.find(res => res.isAuthError);
+
+                if (authError) {
+                    // If any of the calls resulted in a 401, log the user out.
+                    showToast(authError.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                    await logout();
+                    return; // Stop further execution
+                }
+
+                // For other non-critical errors, we can just log them without logging out.
+                results.forEach(res => {
+                    if (!res.success) {
+                        console.warn('A non-critical API call failed:', res.message);
+                        // Optionally show a less intrusive toast for these errors
+                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
+                    }
+                });
+
+                // Assuming the backend nests array responses within a key, e.g., { users: [...] }
+                // This aligns with how the login response provides a 'user' object.
+                users = usersRes.users || [];
+                requests = requestsRes.requests || [];
+                const allAds = adsRes.ads || [];
+                connections = connectionsRes.connections || [];
+                messages = messagesRes.messages || [];
+
+                supplyAds = allAds.filter(ad => ad.adType === 'supply');
+                demandAds = allAds.filter(ad => ad.adType === 'demand');
+
+            } catch (error) {
+                console.error("Failed to load data from server:", error);
+                showToast('خطا در بارگذاری اطلاعات از سرور.', 'error');
+            }
+        }
 
         // Authentication Functions
         function showRoleSelection() {

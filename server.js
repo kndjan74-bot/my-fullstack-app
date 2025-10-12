@@ -77,15 +77,6 @@ io.on('connection', (socket) => {
         socket.userId = userId; // یک شناسه به سوکت اضافه می‌کنیم برای دسترسی آسان‌تر
     });
 
-    socket.on('force_refresh', (data) => {
-        // ارسال event رفرش به همه کاربران
-        io.emit('global_data_update', {
-            type: 'force_refresh',
-            data: data,
-            timestamp: new Date().toISOString()
-        });
-    });
-
     socket.on('disconnect', () => {
         // از شناسه ذخیره شده روی سوکت برای حذف استفاده می‌کنیم
         const userId = socket.userId;
@@ -1324,21 +1315,12 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         }
 
         // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
-        const involvedUsers = new Set();
-        involvedUsers.add(updatedRequest.greenhouseId.toString());
-        involvedUsers.add(updatedRequest.sortingCenterId.toString());
+        const involvedUsers = [updatedRequest.greenhouseId, updatedRequest.sortingCenterId];
         if (updatedRequest.driverId) {
-            involvedUsers.add(updatedRequest.driverId.toString());
+            involvedUsers.push(updatedRequest.driverId);
         }
+        sendUpdateToUsers(involvedUsers, 'request_updated', updatedRequest);
 
-        sendUpdateToUsers(Array.from(involvedUsers), 'request_updated', updatedRequest);
-        
-        // ارسال event عمومی برای همه کلاینت‌ها
-        io.emit('global_data_update', { 
-            type: 'request_updated', 
-            data: updatedRequest,
-            timestamp: new Date().toISOString()
-        });
 
         res.json({
             success: true,
