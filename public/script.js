@@ -644,6 +644,18 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                         accordionItem.classList.add('open');
                         accordionContent.style.maxHeight = accordionContent.scrollHeight + "px";
                         
+                        // --- Fix for map loading issue ---
+                        setTimeout(() => {
+                            const mapElement = accordionItem.querySelector('.map-container');
+                            if (mapElement) {
+                                const mapId = mapElement.id;
+                                const mapInstance = getMapInstance(mapId);
+                                if (mapInstance) {
+                                    mapInstance.invalidateSize();
+                                }
+                            }
+                        }, 350); // A little longer than the transition duration
+
                         // Mark items as "seen" when accordion opens
                         const contentDiv = accordionContent.querySelector('div[id]');
                         if (contentDiv) {
@@ -2966,10 +2978,12 @@ function refreshAllMapMarkers() {
         }
 
         async function confirmSecondStep(requestId) {
-            // No need to load data first, the check is implicit in the API call's success.
             const request = requests.find(r => r.id === requestId);
+            
+            const canProceed = (request.type === 'empty' && request.isPickupConfirmed) || 
+                               (request.type === 'full' && request.receiverAcknowledged);
 
-            if (request && request.isPickupConfirmed) {
+            if (request && canProceed) {
                 const updates = {
                     status: 'completed',
                     completedAt: new Date().toISOString(),
@@ -2980,27 +2994,23 @@ function refreshAllMapMarkers() {
 
                 if (response.success) {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
+                    await loadDataFromServer(); // Force refresh
                     
-                    // Stop tracking and clear the route from the map for the driver.
                     if (currentUser.role === 'driver') {
                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
+                        loadDriverActiveMission(); // Immediately re-render the panel
+                        loadDriverStatus();
                     }
-                    
-                    // The API call already reloaded data, panels, and map markers.
-                    // Just ensure notifications are also updated.
                     updateAllNotifications();
-
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
             } else {
-                const toastMessage = (currentUser.role === 'driver')
-                    ? 'ابتدا باید گلخانه‌دار دریافت را تایید کند.'
-                    : 'ابتدا باید راننده دریافت را تایید کند.';
+                const toastMessage = 'ابتدا باید طرف مقابل تحویل را تایید کند.';
                 showToast(toastMessage, 'error');
             }
         }
@@ -3099,15 +3109,15 @@ function refreshAllMapMarkers() {
 
                                 
                                 ${request.status === 'in_progress' && request.type === 'full' ? `
-                                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
                                         <div class="text-center mb-4">
-                                            <div class="text-blue-700 font-medium mb-2">راننده در محل شماست</div>
-                                            <div class="text-blue-600 text-sm">لطفا پس از تایید راننده، تحویل بار را تایید کنید</div>
+                                            <div class="text-green-700 font-medium mb-2">راننده منتظر تحویل بار است</div>
+                                            <div class="text-green-600 text-sm">لطفاً پس از بارگیری، دریافت بار توسط راننده را تایید کنید</div>
                                         </div>
                                         <div class="flex justify-center">
-                                            <button onclick="confirmSecondStep(${request.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg ${!request.isPickupConfirmed ? 'opacity-50 cursor-not-allowed' : ''}" ${!request.isPickupConfirmed ? 'disabled' : ''}>
-                                                <i class="fas fa-truck-loading ml-2"></i>
-                                                تحویل دادم
+                                            <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg">
+                                                <i class="fas fa-check-circle ml-2"></i>
+                                                تایید بارگیری (تحویل به راننده)
                                             </button>
                                         </div>
                                     </div>
@@ -3661,26 +3671,26 @@ function refreshAllMapMarkers() {
                         ${(activeMission.type !== 'sorting_delivery' && activeMission.type !== 'delivered_basket') ? `
                             <!-- Full Basket Logic for Driver -->
                             ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
-                                <button onclick="confirmFirstStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
-                                    تحویل گرفتم
-                                </button>
-                            ` : ''}
-                            ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
                                 <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
                                     منتظر تایید گلخانه‌دار...
                                 </div>
+                            ` : ''}
+                            ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
+                                <button onclick="confirmSecondStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
+                                    تکمیل ماموریت (تحویل دادم)
+                                </button>
                             ` : ''}
 
                             <!-- Empty Basket Logic for Driver -->
                             ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
-                                    منتظر تایید گلخانه‌دار...
-                                </div>
+                                <button onclick="confirmFirstStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                                     بارگیری شد (تحویل گرفتم)
+                                </button>
                             ` : ''}
                             ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
-                                <button onclick="confirmSecondStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
-                                    تحویل دادم
-                                </button>
+                                 <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
+                                    منتظر تایید گلخانه‌دار...
+                                </div>
                             ` : ''}
                         ` : ''}
                     </div>
@@ -4990,10 +5000,16 @@ function refreshAllMapMarkers() {
             if (response.success) {
                 showToast('تحویل با موفقیت تایید شد.', 'success');
                 
-                await loadDataFromServer();
+                await loadDataFromServer(); // Force refresh
                 refreshAllMapMarkers();
                 loadIncomingDeliveries();
                 filterSortingReports();
+                
+                // Also refresh driver panel if the current user is a driver
+                if (currentUser.role === 'driver') {
+                    loadDriverActiveMission();
+                    loadDriverStatus();
+                }
             } else {
                 showToast(response.message || 'خطا در تایید تحویل.', 'error');
             }
