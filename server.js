@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const jwt =require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
 const webPush = require('web-push');
@@ -109,7 +109,7 @@ const sendUpdateToUsers = (userIds, event, data) => {
 
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/my-app', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
