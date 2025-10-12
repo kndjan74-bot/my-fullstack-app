@@ -401,10 +401,35 @@
         let connections = [];
         let isFormActive = false; // Flag to prevent UI refresh when a form element is active
         let isNavigating = false; // Flag to pause refresh during any navigation
-let socket = null; // Socket.IO instance
 let isRefreshing = false; // New flag to prevent parallel refreshes
 let refreshIntervalId = null; // To hold the ID of the refresh interval
         const orsApiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImIxMGZlYjc0NjIwMzQzOWE5ZDg0OGVjZGZiMTNjZmRlIiwiaCI6Im11cm11cjY0In0=';
+
+const socket = io(API_BASE_URL, {
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionAttempts: 10
+});
+
+socket.on('connect', () => {
+    console.log('🔌 متصل به سرور real-time');
+    if (currentUser) {
+        socket.emit('user_connected', currentUser.id);
+    }
+});
+
+socket.on('disconnect', () => {
+    console.log('🔌 قطع ارتباط با سرور real-time');
+});
+
+socket.on('reconnect', () => {
+    console.log('🔌 اتصال مجدد به سرور real-time');
+    if (currentUser) {
+        socket.emit('user_connected', currentUser.id);
+        refreshAllData(); // رفرش بعد از reconnect
+    }
+});
 
         // Map layer management
         let mapLayers = {};
@@ -2399,40 +2424,8 @@ function refreshAllMapMarkers() {
             refreshIntervalId = setInterval(refreshDataPeriodically, 10000); // 10 seconds
             console.log(`Periodic refresh started with interval ID ${refreshIntervalId}.`);
 
-            // Establish Socket.IO connection
-            if (socket) {
-                socket.disconnect();
-            }
-            socket = io("https://soodcity.liara.run");
-
-            socket.on('connect', () => {
-                console.log('Socket.IO connected successfully with ID:', socket.id);
-                socket.emit('user_connected', currentUser.id);
-            });
-
-            socket.on('request_updated', (updatedRequest) => {
-                console.log('Received request_updated event:', updatedRequest);
-                // Find and update the request in the local array
-                const index = requests.findIndex(r => r.id === updatedRequest.id);
-                if (index !== -1) {
-                    requests[index] = updatedRequest;
-                } else {
-                    requests.push(updatedRequest);
-                }
-
-                // If the update affects the current user, refresh the UI
-                if (updatedRequest.driverId === currentUser.id || 
-                    updatedRequest.greenhouseId === currentUser.id ||
-                    updatedRequest.sortingCenterId === currentUser.id) {
-                    console.log('Request update is relevant. Refreshing UI.');
-                    loadPanelData();
-                    updateAllNotifications();
-                }
-            });
-
-            socket.on('disconnect', () => {
-                console.log('Socket.IO disconnected.');
-            });
+            // Setup real-time event listeners
+            setupRealTimeListeners();
         }
 
         function getRoleTitle(role) {
@@ -2985,15 +2978,21 @@ function refreshAllMapMarkers() {
 
         async function confirmFirstStep(requestId) {
             const response = await api.updateRequest(requestId, { isPickupConfirmed: true });
+
             if (response.success) {
-                // The API wrapper handles all data reloading and panel refreshing.
-                const isDriver = currentUser.role === 'driver';
-                const toastMessage = isDriver
-                    ? 'دریافت بار تایید شد. منتظر تایید گلخانه‌دار...'
-                    : 'دریافت بار تایید شد. منتظر تایید راننده...';
-                showToast(toastMessage, 'success');
-                // We can also trigger an explicit notification update for good measure.
-                updateAllNotifications();
+                showToast('دریافت بار تایید شد. منتظر تایید راننده...', 'success');
+                
+                // 🔥 رفرش فوری و اطمینان از آپدیت real-time
+                await refreshAllData();
+                
+                // 🔥 ارسال دستی event اگر لازم باشد
+                if (typeof io !== 'undefined') {
+                    const request = requests.find(r => r.id === requestId);
+                    if (request) {
+                        // این باعث می‌شود سرور event را برای همه broadcast کند
+                        socket.emit('force_refresh', { requestId: requestId });
+                    }
+                }
             } else {
                 showToast(response.message || 'خطا در تایید مرحله اول.', 'error');
             }
@@ -5077,6 +5076,67 @@ function refreshAllMapMarkers() {
         }
 
         // --- Service Worker Registration and Communication ---
+        function setupRealTimeListeners() {
+            if (typeof io !== 'undefined' && currentUser) {
+                // گوش دادن به آپدیت درخواست‌ها
+                socket.on('request_updated', (updatedRequest) => {
+                    console.log('📡 دریافت آپدیت real-time برای درخواست:', updatedRequest.id);
+                    
+                    // اگر این درخواست مربوط به کاربر جاری است
+                    if (updatedRequest.driverId === currentUser.id || 
+                        updatedRequest.greenhouseId === currentUser.id ||
+                        updatedRequest.sortingCenterId === currentUser.id) {
+                        
+                        // رفرش خودکار داده‌ها
+                        refreshAllData();
+                    }
+                });
+
+                // گوش دادن به آپدیت عمومی
+                socket.on('global_data_update', (data) => {
+                    console.log('🌐 دریافت آپدیت عمومی:', data.type);
+                    refreshAllData();
+                });
+
+                // گوش دادن به آپدیت اتصالات
+                socket.on('connection_updated', (connection) => {
+                    if (connection.sourceId === currentUser.id || connection.targetId === currentUser.id) {
+                        refreshAllData();
+                    }
+                });
+            }
+        }
+
+        async function refreshAllData() {
+            if (isRefreshing) return;
+            
+            isRefreshing = true;
+            try {
+                console.log('🔄 رفرش کامل داده‌ها به صورت real-time...');
+                
+                await loadDataFromServer();
+                
+                if (currentUser) {
+                    loadPanelData();
+                    updateAllNotifications();
+                    refreshAllMapMarkers();
+                    refreshActiveChats();
+                    
+                    // رفرش ماموریت فعال راننده
+                    if (currentUser.role === 'driver') {
+                        loadDriverActiveMission();
+                        loadDriverStatus();
+                    }
+                }
+                
+                console.log('✅ رفرش کامل انجام شد');
+            } catch (error) {
+                console.error('خطا در رفرش داده‌ها:', error);
+            } finally {
+                isRefreshing = false;
+            }
+        }
+
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./service-worker.js')
