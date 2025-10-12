@@ -32,14 +32,12 @@
             landingPage.style.display = 'none';
             authScreen.style.display = 'none';
             mainApp.style.display = 'none';
-            bottomNav.classList.add('hidden');
-            mainApp.style.paddingBottom = '0';
+            bottomNav.classList.add('hidden'); // Hide nav by default
+            mainApp.style.paddingBottom = '0'; // Reset padding
+            loginForm.style.display = 'none';
+            registerForm.style.display = 'none';
+            recoveryForm.style.display = 'none';
             
-            // Instead of display, we toggle the 'hidden' class for the forms
-            loginForm.classList.add('hidden');
-            registerForm.classList.add('hidden');
-            recoveryForm.classList.add('hidden');
-
             document.body.className = ''; // Clear body classes
 
             switch(state) {
@@ -49,23 +47,23 @@
                     break;
                 case UI_STATES.AUTH_LOGIN:
                     authScreen.style.display = 'flex';
-                    loginForm.classList.remove('hidden');
+                    loginForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_REGISTER:
                     authScreen.style.display = 'flex';
-                    registerForm.classList.remove('hidden');
+                    registerForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_RECOVERY:
                     authScreen.style.display = 'flex';
-                    recoveryForm.classList.remove('hidden');
+                    recoveryForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.MAIN_APP:
                     mainApp.style.display = 'block';
-                    bottomNav.classList.remove('hidden');
-                    mainApp.style.paddingBottom = '80px';
+                    bottomNav.classList.remove('hidden'); // Show nav for main app
+                    mainApp.style.paddingBottom = '80px'; // Add padding for nav
                     document.body.className = 'bg-gray-100';
                     break;
             }
@@ -380,6 +378,7 @@
         }
 
         // Global Variables
+        let socket;
         let tabId;
         let currentUser = null; // Will be set after loading all users from storage
         let users = [];
@@ -782,7 +781,8 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                 showToast('خطا در بارگذاری اطلاعات از سرور.', 'error');
             }
         }
- // --- API ---
+
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -1360,6 +1360,12 @@ const API_BASE_URL = getApiBaseUrl();
         refreshIntervalId = null;
         console.log('Periodic refresh stopped on logout.');
     }
+
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                console.log('Socket disconnected on logout.');
+            }
 
             if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage('stop-tracking');
@@ -2355,6 +2361,40 @@ function refreshAllMapMarkers() {
                 return; 
             }
             
+            // Connect to Socket.IO
+            if (!socket && currentUser) {
+                const SOCKET_URL = 'https://soodcity.liara.run'; 
+                socket = io(SOCKET_URL, {
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 3000,
+                });
+
+                socket.on('connect', () => {
+                    console.log('✅ Connected to Socket.IO server with ID:', socket.id);
+                    socket.emit('user_connected', currentUser.id);
+                });
+
+                socket.on('disconnect', () => {
+                    console.log('🔌 Disconnected from Socket.IO server.');
+                });
+
+                // Listen for request updates
+                socket.on('request_updated', (updatedRequest) => {
+                    console.log('📢 Received request_updated event:', updatedRequest);
+                    // Find and update the request in the local `requests` array
+                    const index = requests.findIndex(r => r.id === updatedRequest.id);
+                    if (index !== -1) {
+                        requests[index] = updatedRequest;
+                    } else {
+                        requests.push(updatedRequest);
+                    }
+                    // Refresh the UI if the user is a driver and involved in this request
+                    if (currentUser && currentUser.role === 'driver' && updatedRequest.driverId === currentUser.id) {
+                        loadDriverActiveMission();
+                    }
+                });
+            }
+
             // Update header with dynamic role icon
             const headerTitle = document.getElementById('main-header-title');
             const roleIcon = getRoleIcon(currentUser.role);

@@ -109,7 +109,7 @@ const sendUpdateToUsers = (userIds, event, data) => {
 
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/my-app', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
