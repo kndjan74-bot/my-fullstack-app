@@ -405,6 +405,7 @@
         let isNavigating = false; // Flag to pause refresh during any navigation
 let isRefreshing = false; // New flag to prevent parallel refreshes
 let refreshIntervalId = null; // To hold the ID of the refresh interval
+        let socket = null; // To hold the socket connection
         const orsApiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImIxMGZlYjc0NjIwMzQzOWE5ZDg0OGVjZGZiMTNjZmRlIiwiaCI6Im11cm11cjY0In0=';
 
         // Map layer management
@@ -795,7 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-        // --- API ---
+            // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2411,6 +2412,19 @@ function refreshAllMapMarkers() {
             }
             refreshIntervalId = setInterval(refreshDataPeriodically, 10000); // 10 seconds
             console.log(`Periodic refresh started with interval ID ${refreshIntervalId}.`);
+
+            // Connect to Socket.IO and setup listeners
+            if (typeof io !== 'undefined' && !socket) {
+                socket = io('https://soodcity.liara.run'); // Connect to your server
+                window.socket = socket; // Make it globally accessible for listeners
+                
+                socket.on('connect', () => {
+                    console.log('🔗 Connected to Socket.IO server!');
+                    socket.emit('user_connected', currentUser.id);
+                });
+
+                setupSocketListeners();
+            }
         }
 
         function getRoleTitle(role) {
@@ -3108,33 +3122,33 @@ function refreshAllMapMarkers() {
                                 
 
                                 
-                                ${request.status === 'in_progress' && request.type === 'full' ? `
-                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
-                                        <div class="text-center mb-4">
-                                            <div class="text-green-700 font-medium mb-2">راننده منتظر تحویل بار است</div>
-                                            <div class="text-green-600 text-sm">لطفاً پس از بارگیری، دریافت بار توسط راننده را تایید کنید</div>
-                                        </div>
-                                        <div class="flex justify-center">
-                                            <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg">
-                                                <i class="fas fa-check-circle ml-2"></i>
-                                                تایید بارگیری (تحویل به راننده)
-                                            </button>
-                                        </div>
+                                <!-- New Logic: Empty Basket for Greenhouse -->
+                                ${request.status === 'in_progress' && request.type === 'empty' && !request.isPickupConfirmed ? `
+                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                                        <p class="text-green-700 font-medium mb-2">راننده در حال تحویل سبد خالی است.</p>
+                                        <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                            <i class="fas fa-check ml-2"></i>تحویل گرفتم
+                                        </button>
+                                    </div>
+                                ` : ''}
+                                ${request.status === 'in_progress' && request.type === 'empty' && request.isPickupConfirmed ? `
+                                     <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                                        <p class="text-gray-600">منتظر تایید نهایی راننده...</p>
                                     </div>
                                 ` : ''}
 
-                                ${request.status === 'in_progress' && request.type === 'empty' ? `
-                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
-                                        <div class="text-center mb-4">
-                                            <div class="text-green-700 font-medium mb-2">راننده سبدهای خالی را تحویل می‌دهد</div>
-                                            <div class="text-green-600 text-sm">لطفاً دریافت سبدها را تایید کنید</div>
-                                        </div>
-                                        <div class="flex justify-center">
-                                            <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg">
-                                                <i class="fas fa-check-circle ml-2"></i>
-                                                تحویل گرفتم
-                                            </button>
-                                        </div>
+                                <!-- New Logic: Full Basket for Greenhouse -->
+                                ${request.status === 'in_progress' && request.type === 'full' && !request.isPickupConfirmed ? `
+                                    <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                                        <p class="text-gray-600">منتظر تایید دریافت بار توسط راننده...</p>
+                                    </div>
+                                ` : ''}
+                                ${request.status === 'in_progress' && request.type === 'full' && request.isPickupConfirmed ? `
+                                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                                        <p class="text-blue-700 font-medium mb-2">راننده بار را تحویل گرفت.</p>
+                                        <button onclick="confirmSecondStep(${request.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                            <i class="fas fa-truck-loading ml-2"></i>تکمیل ماموریت (تحویل دادم)
+                                        </button>
                                     </div>
                                 ` : ''}
                             </div>
@@ -3669,27 +3683,33 @@ function refreshAllMapMarkers() {
                             مسیریابی خارجی
                         </button>
                         ${(activeMission.type !== 'sorting_delivery' && activeMission.type !== 'delivered_basket') ? `
-                            <!-- Full Basket Logic for Driver -->
+                            <!-- New Logic: Empty Basket for Driver -->
+                            ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
+                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                                    <p class="text-gray-600">منتظر تایید دریافت سبدها توسط گلخانه‌دار...</p>
+                                </div>
+                            ` : ''}
+                            ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
+                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                                    <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد.</p>
+                                    <button onclick="confirmSecondStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                        <i class="fas fa-check-double ml-2"></i>تکمیل ماموریت (تحویل دادم)
+                                    </button>
+                                </div>
+                            ` : ''}
+
+                            <!-- New Logic: Full Basket for Driver -->
                             ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
-                                    منتظر تایید گلخانه‌دار...
+                                <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                                    <p class="text-green-700 font-medium mb-2">در حال تحویل گرفتن بار از گلخانه.</p>
+                                    <button onclick="confirmFirstStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                        <i class="fas fa-box-check ml-2"></i>تحویل گرفتم
+                                    </button>
                                 </div>
                             ` : ''}
                             ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
-                                <button onclick="confirmSecondStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
-                                    تکمیل ماموریت (تحویل دادم)
-                                </button>
-                            ` : ''}
-
-                            <!-- Empty Basket Logic for Driver -->
-                            ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
-                                <button onclick="confirmFirstStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
-                                     بارگیری شد (تحویل گرفتم)
-                                </button>
-                            ` : ''}
-                            ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
-                                 <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
-                                    منتظر تایید گلخانه‌دار...
+                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                                    <p class="text-gray-600">منتظر تایید نهایی گلخانه‌دار...</p>
                                 </div>
                             ` : ''}
                         ` : ''}
@@ -4880,6 +4900,33 @@ function refreshAllMapMarkers() {
                 const newLatLng = L.latLng(location.lat, location.lng);
                 marker.setLatLng(newLatLng);
             }
+        }
+
+        // --- Real-Time Syncing via Socket.IO ---
+        function setupSocketListeners() {
+            if (typeof io === 'undefined' || !window.socket) {
+                console.warn("Socket.IO client not available, real-time updates will be disabled.");
+                return;
+            }
+
+            socket.on('request_updated', (updatedRequest) => {
+                console.log(`📢 Real-time update received for request #${updatedRequest.id}`);
+                const index = requests.findIndex(r => r.id === updatedRequest.id);
+                if (index !== -1) {
+                    requests[index] = updatedRequest;
+                } else {
+                    requests.push(updatedRequest);
+                }
+
+                // Re-render all relevant parts of the UI
+                if (currentUser) {
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                    updateAllNotifications();
+                }
+            });
+
+            // You can add more listeners here, e.g., for 'user_updated' if needed
         }
 
         // --- Real-Time Syncing via Storage Event ---

@@ -205,7 +205,6 @@ const RequestSchema = new mongoose.Schema({
         default: 'pending' 
     },
     isPickupConfirmed: { type: Boolean, default: false },
-    receiverAcknowledged: { type: Boolean, default: false }, // New field for receiver confirmation
     isConsolidated: { type: Boolean, default: false },
     rejectionReason: { type: String },
     assignedAt: { type: Date },
@@ -1267,34 +1266,8 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
-        // --- Start of New Two-Stage Delivery Logic ---
-        const userRole = req.user.role;
-
-        // If a greenhouse user is confirming they received an EMPTY basket delivery
-        if (userRole === 'greenhouse' && updates.isPickupConfirmed && originalRequest.type === 'empty') {
-            // Just confirm the pickup, but DO NOT change the status yet.
-            // The driver will complete it in the next step.
-        } 
-        // If a driver is confirming they picked up a FULL basket load
-        else if (userRole === 'driver' && updates.isPickupConfirmed && originalRequest.type === 'full') {
-            // Just confirm the pickup.
-        }
-        // If a driver is completing the final step of an EMPTY basket delivery
-        else if (userRole === 'driver' && updates.status === 'completed' && originalRequest.type === 'empty') {
-            if (!originalRequest.isPickupConfirmed) {
-                return res.status(400).json({ success: false, message: 'گلخانه‌دار هنوز دریافت را تایید نکرده است.' });
-            }
-        }
-        // If a greenhouse user is acknowledging they received a FULL basket load from the driver
-        else if (userRole === 'greenhouse' && updates.receiverAcknowledged && originalRequest.type === 'full') {
-            // Just acknowledge receipt.
-        }
-        // If a driver is completing the final step of a FULL basket delivery
-        else if (userRole === 'driver' && updates.status === 'completed' && originalRequest.type === 'full') {
-            if (!originalRequest.receiverAcknowledged) {
-                 return res.status(400).json({ success: false, message: 'گلخانه‌دار هنوز دریافت بار را تایید نکرده است.' });
-            }
-        }
+        // The complex conditional logic is removed. The server now trusts the client
+        // to send the correct updates at the correct time. The UI logic will enforce the sequence.
 
         // Handle driver capacity changes only if a driver is assigned and the status is changing.
         if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
@@ -1349,13 +1322,21 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
 
-        // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
-        const involvedUsers = [updatedRequest.greenhouseId, updatedRequest.sortingCenterId];
+        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران مرتبط**
+        const involvedUsers = [
+            updatedRequest.greenhouseId, 
+            updatedRequest.sortingCenterId
+        ].filter(Boolean); // Filter out null/undefined IDs
+        
         if (updatedRequest.driverId) {
             involvedUsers.push(updatedRequest.driverId);
         }
-        sendUpdateToUsers(involvedUsers, 'request_updated', updatedRequest);
 
+        // Use a Set to ensure unique user IDs before broadcasting
+        const uniqueInvolvedUsers = [...new Set(involvedUsers)];
+
+        console.log(`🚀 Broadcasting request update for #${updatedRequest.id} to users:`, uniqueInvolvedUsers);
+        sendUpdateToUsers(uniqueInvolvedUsers, 'request_updated', updatedRequest);
 
         res.json({
             success: true,
