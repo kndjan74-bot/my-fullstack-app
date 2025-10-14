@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt =require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
 const webPush = require('web-push');
@@ -75,15 +75,6 @@ io.on('connection', (socket) => {
         console.log(`🔗 کاربر با شناسه ${userId} به سوکت ${socket.id} متصل شد.`);
         connectedUsers[userId] = { socketId: socket.id, socket: socket };
         socket.userId = userId; // یک شناسه به سوکت اضافه می‌کنیم برای دسترسی آسان‌تر
-    });
-
-    socket.on('force_refresh', (data) => {
-        // ارسال event رفرش به همه کاربران
-        io.emit('global_data_update', {
-            type: 'force_refresh',
-            data: data,
-            timestamp: new Date().toISOString()
-        });
     });
 
     socket.on('disconnect', () => {
@@ -163,13 +154,6 @@ const UserSchema = new mongoose.Schema({
     subscription: { type: Object, default: null }
 });
 
-UserSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        this.id = await getNextSequence('user');
-    }
-    next();
-});
-
 const ConnectionSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
     sourceId: { type: Number, required: true },
@@ -184,19 +168,24 @@ const ConnectionSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-ConnectionSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        this.id = await getNextSequence('connection');
-    }
-    next();
-});
-
 const RequestSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
-    greenhouseId: { type: Number, required: true },
-    greenhouseName: { type: String, required: true },
-    greenhousePhone: { type: String, required: true },
-    greenhouseAddress: { type: String, required: true },
+    greenhouseId: { 
+        type: Number, 
+        required: function() { return this.type !== 'delivered_basket'; } 
+    },
+    greenhouseName: { 
+        type: String, 
+        required: function() { return this.type !== 'delivered_basket'; } 
+    },
+    greenhousePhone: { 
+        type: String, 
+        required: function() { return this.type !== 'delivered_basket'; } 
+    },
+    greenhouseAddress: { 
+        type: String, 
+        required: function() { return this.type !== 'delivered_basket'; } 
+    },
     sortingCenterId: { type: Number, required: true },
     sortingCenterName: { type: String, required: true },
     driverId: { type: Number },
@@ -224,13 +213,6 @@ const RequestSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-RequestSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        this.id = await getNextSequence('request');
-    }
-    next();
-});
-
 const MessageSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
     adId: { type: Number, required: true },
@@ -242,13 +224,6 @@ const MessageSchema = new mongoose.Schema({
     image: { type: String },
     read: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
-});
-
-MessageSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        this.id = await getNextSequence('message');
-    }
-    next();
 });
 
 const AdSchema = new mongoose.Schema({
@@ -266,13 +241,6 @@ const AdSchema = new mongoose.Schema({
     buyerId: { type: Number },
     date: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
-});
-
-AdSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        this.id = await getNextSequence('ad');
-    }
-    next();
 });
 
 // ایجاد مدل‌ها
@@ -392,6 +360,7 @@ app.post('/api/users/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const newUser = new User({
+            id: await getNextSequence('user'),
             role,
             fullname,
             province,
@@ -686,6 +655,7 @@ app.post('/api/ads', auth, async (req, res) => {
         const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
 
         const newAd = new Ad({
+            id: await getNextSequence('ad'),
             product,
             category,
             quantity: parseInt(quantity),
@@ -794,6 +764,7 @@ app.post('/api/messages', auth, async (req, res) => {
         const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
 
         const newMessage = new Message({
+            id: await getNextSequence('message'),
             adId: parseInt(adId),
             senderId,
             senderName,
@@ -975,6 +946,7 @@ app.post('/api/connections', auth, async (req, res) => {
 
         // ایجاد اتصال جدید
         const connectionData = {
+            id: await getNextSequence('connection'),
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
@@ -1250,6 +1222,7 @@ app.post('/api/requests', auth, async (req, res) => {
         const { greenhouseId, greenhouseName, greenhousePhone, greenhouseAddress, sortingCenterId, sortingCenterName, type, quantity, description, location } = req.body;
 
         const newRequest = new Request({
+            id: await getNextSequence('request'),
             greenhouseId,
             greenhouseName,
             greenhousePhone,
@@ -1293,44 +1266,40 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
+        // The complex conditional logic is removed. The server now trusts the client
+        // to send the correct updates at the correct time. The UI logic will enforce the sequence.
+
         // Handle driver capacity changes only if a driver is assigned and the status is changing.
         if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
-
                 // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
                 if (updates.status === 'in_progress') {
                     if (originalRequest.type === 'empty') {
-                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
                 }
-                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
+                // LOGIC FOR DECREMENTING CAPACITY (WHEN COMPLETING A MISSION)
                 else if (updates.status === 'completed') {
                     if (originalRequest.type === 'empty') {
-                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                        // Mission: Deliver EMPTY baskets. Driver's empty basket count decreases.
+                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
-                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
-                    } else if (originalRequest.type === 'delivered_basket') {
-                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
-                        // The quantity here represents the number of missions, which equals the number of baskets.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                        // Mission: Deliver FULL baskets. Driver's load capacity decreases.
+                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
+                    // Note: 'delivered_basket' does not affect these two capacities.
                 }
-
-                // Apply the update to the driver if there are changes.
                 if (Object.keys(driverUpdate).length > 0) {
                     await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
                     console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
                 }
             }
         }
+        // --- End of New Logic ---
 
         // Now, update the request itself with the new data.
         const updatedRequest = await Request.findOneAndUpdate(
@@ -1353,22 +1322,21 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
 
-        // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
-        const involvedUsers = new Set();
-        involvedUsers.add(updatedRequest.greenhouseId.toString());
-        involvedUsers.add(updatedRequest.sortingCenterId.toString());
+        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران مرتبط**
+        const involvedUsers = [
+            updatedRequest.greenhouseId, 
+            updatedRequest.sortingCenterId
+        ].filter(Boolean); // Filter out null/undefined IDs
+        
         if (updatedRequest.driverId) {
-            involvedUsers.add(updatedRequest.driverId.toString());
+            involvedUsers.push(updatedRequest.driverId);
         }
 
-        sendUpdateToUsers(Array.from(involvedUsers), 'request_updated', updatedRequest);
-        
-        // ارسال event عمومی برای همه کلاینت‌ها
-        io.emit('global_data_update', { 
-            type: 'request_updated', 
-            data: updatedRequest,
-            timestamp: new Date().toISOString()
-        });
+        // Use a Set to ensure unique user IDs before broadcasting
+        const uniqueInvolvedUsers = [...new Set(involvedUsers)];
+
+        console.log(`🚀 Broadcasting request update for #${updatedRequest.id} to users:`, uniqueInvolvedUsers);
+        sendUpdateToUsers(uniqueInvolvedUsers, 'request_updated', updatedRequest);
 
         res.json({
             success: true,
