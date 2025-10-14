@@ -401,9 +401,6 @@
         let connections = [];
         let isFormActive = false; // Flag to prevent UI refresh when a form element is active
         let isNavigating = false; // Flag to pause refresh during any navigation
-let socket = null; // Socket.IO instance
-let isRefreshing = false; // New flag to prevent parallel refreshes
-let refreshIntervalId = null; // To hold the ID of the refresh interval
         const orsApiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImIxMGZlYjc0NjIwMzQzOWE5ZDg0OGVjZGZiMTNjZmRlIiwiaCI6Im11cm11cjY0In0=';
 
         // Map layer management
@@ -745,25 +742,14 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                     api.getAllMessages()
                 ]);
 
-                // The _fetch helper now returns an `isAuthError` flag for 401 errors.
+                // The _fetch helper returns { success: false, ... } on any error, including 401.
                 const results = [usersRes, requestsRes, adsRes, connectionsRes, messagesRes];
-                const authError = results.find(res => res.isAuthError);
-
-                if (authError) {
-                    // If any of the calls resulted in a 401, log the user out.
-                    showToast(authError.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                if (results.some(res => !res.success)) {
+                    const errorResult = results.find(res => !res.success);
+                    showToast(errorResult.message || 'نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
                     await logout();
-                    return; // Stop further execution
+                    return;
                 }
-
-                // For other non-critical errors, we can just log them without logging out.
-                results.forEach(res => {
-                    if (!res.success) {
-                        console.warn('A non-critical API call failed:', res.message);
-                        // Optionally show a less intrusive toast for these errors
-                        // showToast('خطای موقت در بروزرسانی داده‌ها.', 'info');
-                    }
-                });
 
                 // Assuming the backend nests array responses within a key, e.g., { users: [...] }
                 // This aligns with how the login response provides a 'user' object.
@@ -782,7 +768,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
+           // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -809,12 +795,8 @@ const API_BASE_URL = getApiBaseUrl();
                 }
 
                 try {
-                    const response = await fetch(url, { ...options, headers, cache: 'no-cache' });
+                    const response = await fetch(url, { ...options, headers });
                     if (!response.ok) {
-                        // If the error is a 401 Unauthorized, we return a specific flag.
-                        if (response.status === 401) {
-                            return { success: false, message: 'نشست شما منقضی شده است.', isAuthError: true };
-                        }
                         const data = await response.json();
                         console.error(`API error: ${response.status} - ${data.message || 'Unknown error'}`);
                         return { success: false, message: data.message || `خطای سرور: ${response.status}` };
@@ -856,18 +838,12 @@ const API_BASE_URL = getApiBaseUrl();
             async updateUser(updates) {
                 return this._fetch(`${API_BASE_URL}/users`, { method: 'PUT', body: JSON.stringify(updates) });
             },
-            async sendVerificationSms(phone) {
-                return this._fetch(`${API_BASE_URL}/sms/send-verification`, { method: 'POST', body: JSON.stringify({ phone }) });
+            async resetPassword(phone, newPassword) {
+                // This endpoint needs to be implemented on the backend
+                return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, newPassword }) });
             },
-            async resetPassword(phone, code, newPassword) {
-                return this._fetch(`${API_BASE_URL}/users/reset-password`, { method: 'POST', body: JSON.stringify({ phone, code, newPassword }) });
-            },
-             async checkUserExists(phone) {
+            async checkUserExists(phone) {
                 return this._fetch(`${API_BASE_URL}/users/check-phone`, { method: 'POST', body: JSON.stringify({ phone }) });
-            },
-            
-            async subscribe(subscription) {
-                return this._fetch(`${API_BASE_URL}/subscribe`, { method: 'POST', body: JSON.stringify(subscription) });
             },
 
             // --- Ads ---
@@ -1159,58 +1135,111 @@ const API_BASE_URL = getApiBaseUrl();
         }
         */
 
-        // === NEW PASSWORD RECOVERY FUNCTIONS (FROM USER) ===
+        // === NEW PASSWORD RECOVERY FUNCTIONS (REFACTORED) ===
         async function handlePasswordRecovery(event) {
             event.preventDefault();
             const phone = document.getElementById('recovery-phone').value;
             
-            if (!phone) {
-                showToast('لطفاً شماره تلفن را وارد کنید', 'error');
-                return;
-            }
+            // Use the new, unauthenticated endpoint to check if the user exists
+            const response = await api.checkUserExists(phone);
 
-            // This now calls the secure server endpoint.
-            const response = await api.sendVerificationSms(phone);
+            if (response.success && response.exists) {
+                // If user exists, proceed to send SMS
+                await sendVerificationSms(phone);
 
-            if (response.success) {
-                showToast(response.message || 'کد تایید ارسال شد.', 'success');
                 // Show the next step in the UI
                 document.getElementById('recovery-phone-display').textContent = phone;
                 document.getElementById('recovery-step-1').classList.add('hidden');
                 document.getElementById('recovery-step-2').classList.remove('hidden');
-                document.getElementById('recovery-result').classList.add('hidden'); // Ensure result is hidden
+                document.getElementById('recovery-result').classList.add('hidden');
+            } else if (response.success && !response.exists) {
+                // If user does not exist
+                showToast('کاربری با این شماره تلفن یافت نشد', 'error');
             } else {
-                // The server now handles user existence checks and other errors.
-                showToast(response.message || 'خطا در ارسال کد تایید.', 'error');
+                // Handle API call failure or other errors
+                showToast(response.message || 'خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید.', 'error');
             }
         }
 
-        // This function is now removed as it is handled by the server.
+        async function sendVerificationSms(phoneNumber) {
+            // This is a placeholder for your actual API call.
+            // The user needs to replace the placeholders with their actual data.
+            console.log(`Simulating sending SMS to ${phoneNumber}`);
+
+            const API_ENDPOINT_URL = 'https://api.sms.ir/v1/send/verify'; // As per user's PHP example
+            const YOUR_API_KEY = 'eCGjVdVxsFTHy9oNhTmpMC0e3R11dXkWPSbmmnMAC5u5Cbeb'; // User must replace this
+            const YOUR_TEMPLATE_ID = 134626; // As per user's PHP example
+
+            // For simulation, we generate a code here. In a real app, the backend generates and stores it.
+            const verificationCode = Math.floor(1000 + Math.random() * 9000);
+            // We'll store it in a temporary global variable for the next step.
+            window.tempVerificationCode = verificationCode.toString();
+            console.log(`Generated verification code: ${window.tempVerificationCode}`);
+
+
+            
+            // --- UNCOMMENT THIS SECTION TO USE THE REAL API CALL ---
+            
+            const payload = {
+                mobile: phoneNumber,
+                templateId: YOUR_TEMPLATE_ID,
+                parameters: [
+                    { name: 'CODE', value: verificationCode.toString() }
+                ]
+            };
+
+            try {
+                const response = await fetch(API_ENDPOINT_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // sms.ir typically uses a custom header like 'X-API-KEY'.
+                        // The user must confirm the correct header from their provider's documentation.
+                        'X-API-KEY': YOUR_API_KEY 
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    // If the API call fails, show an error and stop.
+                    showToast('خطا در ارسال کد تایید. لطفاً دوباره تلاش کنید.', 'error');
+                    throw new Error(`API call failed with status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log('SMS API Response:', result);
+                showToast('کد تایید با موفقیت ارسال شد.', 'success');
+
+            } catch (error) {
+                console.error('Failed to send SMS:', error);
+                // Even if the API fails, we continue in this simulation. 
+                // In a real app, you might want to stop the user from proceeding.
+            }
+            
+        }
 
         async function verifyRecoveryCode(event) {
             event.preventDefault();
             const enteredCode = document.getElementById('recovery-code').value;
             const phone = document.getElementById('recovery-phone').value; // Get the phone number again
 
-            if (!enteredCode) {
-                showToast('لطفاً کد تایید را وارد کنید.', 'error');
-                return;
-            }
+            // In a real app, the server would verify the code. Here we simulate it.
+            if (enteredCode === window.tempVerificationCode) {
+                const newPassword = generateSecurePassword();
+                const response = await api.resetPassword(phone, newPassword);
 
-            const newPassword = generateSecurePassword();
-            // The API call now includes the code for server-side verification.
-            const response = await api.resetPassword(phone, enteredCode, newPassword);
+                if (response.success) {
+                    // Hide the verification form and show the result
+                    document.getElementById('recovery-step-2').classList.add('hidden');
+                    document.getElementById('new-password').textContent = newPassword;
+                    document.getElementById('recovery-result').classList.remove('hidden');
 
-            if (response.success) {
-                // Hide the verification form and show the result
-                document.getElementById('recovery-step-2').classList.add('hidden');
-                document.getElementById('new-password').textContent = newPassword;
-                document.getElementById('recovery-result').classList.remove('hidden');
-
-                showToast('رمز عبور با موفقیت بازیابی شد.', 'success');
+                    showToast('رمز عبور با موفقیت بازیابی شد.', 'success');
+                } else {
+                    showToast(response.message || 'خطا در بازیابی رمز عبور.', 'error');
+                }
             } else {
-                // Display the error message from the server (e.g., "Invalid code").
-                showToast(response.message || 'خطا در تایید کد.', 'error');
+                showToast('کد تایید وارد شده صحیح نیست.', 'error');
             }
         }
 
@@ -1354,13 +1383,6 @@ const API_BASE_URL = getApiBaseUrl();
         }
 
         async function logout() {
-    // Clear the refresh interval when the user logs out
-    if (refreshIntervalId) {
-        clearInterval(refreshIntervalId);
-        refreshIntervalId = null;
-        console.log('Periodic refresh stopped on logout.');
-    }
-
             if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage('stop-tracking');
             }
@@ -2106,7 +2128,7 @@ function refreshAllMapMarkers() {
                 updateBadge('sorting-incoming-deliveries-badge', unseenIncomingDeliveries.length);
                 totalUnreadCount += unseenIncomingDeliveries.length;
 
-            } else if (currentUser.role === 'driver') {
+            } else if (role === 'driver') {
                 // Pending assignments
                 const pendingAssignments = requests.filter(r => r.driverId === currentUser.id && r.status === 'assigned');
                 bellNotificationCount += pendingAssignments.length;
@@ -2391,48 +2413,6 @@ function refreshAllMapMarkers() {
             
             // Check for application updates
             checkForAppUpdates();
-
-            // Start the periodic refresh only after a successful login.
-            if (refreshIntervalId) {
-                clearInterval(refreshIntervalId); // Clear any existing interval
-            }
-            refreshIntervalId = setInterval(refreshDataPeriodically, 10000); // 10 seconds
-            console.log(`Periodic refresh started with interval ID ${refreshIntervalId}.`);
-
-            // Establish Socket.IO connection
-            if (socket) {
-                socket.disconnect();
-            }
-            socket = io("https://soodcity.liara.run");
-
-            socket.on('connect', () => {
-                console.log('Socket.IO connected successfully with ID:', socket.id);
-                socket.emit('user_connected', currentUser.id);
-            });
-
-            socket.on('request_updated', (updatedRequest) => {
-                console.log('Received request_updated event:', updatedRequest);
-                // Find and update the request in the local array
-                const index = requests.findIndex(r => r.id === updatedRequest.id);
-                if (index !== -1) {
-                    requests[index] = updatedRequest;
-                } else {
-                    requests.push(updatedRequest);
-                }
-
-                // If the update affects the current user, refresh the UI
-                if (updatedRequest.driverId === currentUser.id || 
-                    updatedRequest.greenhouseId === currentUser.id ||
-                    updatedRequest.sortingCenterId === currentUser.id) {
-                    console.log('Request update is relevant. Refreshing UI.');
-                    loadPanelData();
-                    updateAllNotifications();
-                }
-            });
-
-            socket.on('disconnect', () => {
-                console.log('Socket.IO disconnected.');
-            });
         }
 
         function getRoleTitle(role) {
@@ -2550,26 +2530,30 @@ function refreshAllMapMarkers() {
         }
 
         async function approveConnection(connectionId) {
-            // The API call will handle reloading data and panels.
             const response = await api.updateConnection(connectionId, { status: 'approved' });
-
             if (response.success) {
+                // The server should create the notification for the source user.
                 showToast('اتصال تایید شد', 'success');
-                // Immediately update the notification badges after the successful action.
-                updateAllNotifications();
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
+                loadSortingApprovedConnections();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در تایید اتصال.', 'error');
             }
         }
 
         async function rejectConnection(connectionId) {
-            // The API call will handle reloading data and panels.
+            // We need the connection details before deleting it to send a notification.
+            await loadDataFromServer();
+            
             const response = await api.deleteConnection(connectionId);
-
             if (response.success) {
+                // The server should handle notifying the user (if desired).
                 showToast('درخواست اتصال رد شد', 'info');
-                // Immediately update the notification badges after the successful action.
-                updateAllNotifications();
+                await loadDataFromServer(); // Reload data to reflect changes
+                loadSortingConnectionRequests();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در رد کردن اتصال.', 'error');
             }
@@ -2841,7 +2825,7 @@ function refreshAllMapMarkers() {
                 const formHtml = `
                     <div class="flex items-center space-x-2 space-x-reverse border-b pb-4 mb-4">
                         <select id="greenhouse-sorting-center-select" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500 bg-white">
-                            <!-- Options populated by JS -->
+                            <option value="">انتخاب مرکز سورتینگ...</option>
                         </select>
                         <button onclick="requestGreenhouseConnection()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg whitespace-nowrap">
                             <i class="fas fa-plus ml-2"></i>
@@ -2849,7 +2833,7 @@ function refreshAllMapMarkers() {
                         </button>
                     </div>
                     <div id="greenhouse-current-connections" class="space-y-3">
-                        <!-- List populated by JS -->
+                        <!-- List will be populated below -->
                     </div>
                 `;
                 container.innerHTML = formHtml;
@@ -2973,11 +2957,12 @@ function refreshAllMapMarkers() {
             const response = await api.createRequest(requestData);
 
             if (response.success) {
+                // Server should notify the sorting center.
                 showToast('درخواست با موفقیت ارسال شد', 'success');
                 event.target.reset();
-                // The api.createRequest method already reloads data and panels.
-                // We just need to trigger the immediate notification update.
-                updateAllNotifications();
+                await loadDataFromServer();
+                loadGreenhouseRequests();
+                updateAllNotifications(); // Instant notification update
             } else {
                 showToast(response.message || 'خطا در ارسال درخواست.', 'error');
             }
@@ -2986,21 +2971,24 @@ function refreshAllMapMarkers() {
         async function confirmFirstStep(requestId) {
             const response = await api.updateRequest(requestId, { isPickupConfirmed: true });
             if (response.success) {
-                // The API wrapper handles all data reloading and panel refreshing.
+                // Server should notify the other party.
                 const isDriver = currentUser.role === 'driver';
                 const toastMessage = isDriver
                     ? 'دریافت بار تایید شد. منتظر تایید گلخانه‌دار...'
                     : 'دریافت بار تایید شد. منتظر تایید راننده...';
                 showToast(toastMessage, 'success');
-                // We can also trigger an explicit notification update for good measure.
-                updateAllNotifications();
-            } else {
-                showToast(response.message || 'خطا در تایید مرحله اول.', 'error');
+                
+                await loadDataFromServer();
+                if (isDriver) {
+                    loadDriverActiveMission();
+                } else {
+                    loadGreenhouseRequests();
+                }
             }
         }
 
         async function confirmSecondStep(requestId) {
-            // No need to load data first, the check is implicit in the API call's success.
+            await loadDataFromServer();
             const request = requests.find(r => r.id === requestId);
 
             if (request && request.isPickupConfirmed) {
@@ -3011,23 +2999,29 @@ function refreshAllMapMarkers() {
                 };
 
                 const response = await api.updateRequest(requestId, updates);
-
                 if (response.success) {
+                    // Server should notify all parties.
+                    
+                    // Stop tracking and clear the route from the map
+                    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.controller.postMessage('stop-tracking');
+                    }
+                    clearDriverWatcher();
+                    clearRoute(driverMainMap);
+
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
                     
-                    // Stop tracking and clear the route from the map for the driver.
-                    if (currentUser.role === 'driver') {
-                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                            navigator.serviceWorker.controller.postMessage('stop-tracking');
-                        }
-                        clearDriverWatcher();
-                        clearRoute(driverMainMap);
+                    await loadDataFromServer(); // Reload data
+                    const isDriver = currentUser.role === 'driver';
+                    if (isDriver) {
+                        loadDriverActiveMission();
+                        loadDriverStatus();
+                        filterDriverReports();
+                    } else {
+                        loadGreenhouseRequests();
+                        filterGreenhouseReports();
                     }
-                    
-                    // The API call already reloaded data, panels, and map markers.
-                    // Just ensure notifications are also updated.
-                    updateAllNotifications();
-
+                    refreshAllMapMarkers();
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
@@ -3178,7 +3172,7 @@ function refreshAllMapMarkers() {
             if (request) {
                 const response = await api.deleteRequest(requestId);
                 if (response.success) {
-                    // Server should notify sorting center.
+                    // Server should notify greenhouse.
                     showToast('درخواست با موفقیت رد شد.', 'success');
                     await loadDataFromServer();
                     loadSortingRequests();
@@ -3333,6 +3327,7 @@ function refreshAllMapMarkers() {
             
             if (closestDriver) {
                 assignDriverToRequest(requestId, closestDriver.id);
+                showToast(`درخواست به ${closestDriver.fullname} اختصاص داده شد`, 'success');
             } else {
                 // This case should not be reached if locatedDrivers.length > 0, but as a fallback:
                 showToast('خطا در یافتن نزدیک‌ترین راننده.', 'error');
@@ -3367,6 +3362,7 @@ function refreshAllMapMarkers() {
         }
 
         async function assignDriverToRequest(requestId, driverId) {
+            await loadDataFromServer();
             const driver = users.find(u => u.id === driverId);
             const request = requests.find(r => r.id === requestId);
 
@@ -3382,10 +3378,11 @@ function refreshAllMapMarkers() {
 
                 const response = await api.updateRequest(requestId, updates);
                 if (response.success) {
+                    // Server should notify driver and greenhouse.
                     showToast(`درخواست به ${driver.fullname} اختصاص داده شد`, 'success');
-                    // The API call already reloads data. We just need to trigger the instant UI refresh.
-                    updateAllNotifications();
-                    refreshAllMapMarkers();
+                    await loadDataFromServer();
+                    loadSortingRequests();
+                    loadAvailableDrivers();
                 } else {
                     showToast(response.message || 'خطا در اختصاص راننده.', 'error');
                 }
@@ -3579,24 +3576,32 @@ function refreshAllMapMarkers() {
                 acceptedAt: new Date().toISOString()
             };
 
+            // The server should handle updating the driver's capacity in the same transaction.
             const response = await api.updateRequest(requestId, updates);
 
             if (response.success) {
                 showToast('درخواست پذیرفته شد. مسیریابی فعال شد.', 'success');
 
-                // The API call has already reloaded all data and re-rendered the panels.
-                // We just need to update the local currentUser object with the latest data from the `users` array.
+                // The server is now the source of truth. We just need to reload all data.
+                await loadDataFromServer();
+
+                // The capacity/basket count for the driver will be updated from the server response.
+                // We need to update the currentUser object with the new data.
                 const updatedSelf = users.find(u => u.id === currentUser.id);
                 if (updatedSelf) {
                     currentUser = updatedSelf;
                 }
                 
-                // Ensure notification badges are updated for all relevant users.
-                updateAllNotifications();
+                loadDriverRequests();
+                loadDriverActiveMission();
+                loadDriverStatus();
                 
-                // The map markers were already refreshed by the API call, so we can proceed with navigation.
+                // Instantly update the driver's marker color on all maps
+                refreshAllMapMarkers();
+
+                // Find the accepted request to start navigation
                 const request = requests.find(r => r.id === requestId);
-                if (request && driverMainMap) { // Ensure map is initialized
+                if (request) {
                     await updateRoute(request, driverMainMap);
                     startGPSNavigation(request);
 
@@ -4442,7 +4447,7 @@ function refreshAllMapMarkers() {
                     });
                 });
 
-            } else if (currentUser.role === 'driver') {
+            } else if (role === 'driver') {
                 // Pending assignments
                 const pendingAssignments = requests.filter(r => r.driverId === currentUser.id && r.status === 'assigned');
                 pendingAssignments.forEach(req => {
@@ -4689,28 +4694,27 @@ function refreshAllMapMarkers() {
 
             const registration = await navigator.serviceWorker.ready;
             let subscription = await registration.pushManager.getSubscription();
-            
-            // If user is already subscribed or has definitively denied permission, do nothing.
-            if (subscription || Notification.permission === 'denied') {
+            if (subscription || Notification.permission !== 'default') {
+                // User is already subscribed or has already chosen to allow/deny.
+                // No need to show the custom modal.
                 return;
             }
 
             const subscribeUser = async () => {
                 try {
+                    // IMPORTANT: This is a placeholder VAPID public key.
+                    // You must generate your own key pair on your server and replace this value.
                     const vapidPublicKey = 'BNo_gideD51dMHezXPl30kAP89i16f1fqdG2hB_L5T6sT4aM7L2K2F8p1aJ_r-A-1y8a-z-H8B_y_Z-E8D9F6wY';
                     const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
 
-                    const newSubscription = await registration.pushManager.subscribe({
+                    subscription = await registration.pushManager.subscribe({
                         userVisibleOnly: true,
                         applicationServerKey: convertedVapidKey
                     });
 
-                    console.log('%c[Push Subscription] User subscribed successfully.', 'color: green; font-weight: bold;');
-                    
-                    // Send the new subscription object to the backend server.
-                    await api.subscribe(newSubscription);
-                    console.log('Subscription details sent to the server.');
-
+                    console.log('%c[Push Subscription] SUBSCRIBED:', 'color: green; font-weight: bold;', subscription);
+                    console.log('%cTODO: Send this subscription object to your server to save against the user ID.', 'color: orange; font-weight: bold;');
+                
                 } catch (error) {
                     console.error('Failed to subscribe to push notifications:', error);
                     if (Notification.permission === 'denied') {
@@ -4719,15 +4723,12 @@ function refreshAllMapMarkers() {
                 }
             };
             
-            // Only ask for permission if it hasn't been granted or denied yet.
-            if (Notification.permission === 'default') {
-                showPermissionModal({
-                    icon: '<i class="fas fa-bell text-blue-500"></i>',
-                    title: 'فعال‌سازی اعلان‌ها',
-                    body: 'برای اطلاع‌رسانی از ماموریت‌ها و پیام‌های جدید، لطفاً اجازه ارسال اعلان را به ما بدهید. ما مزاحم شما نخواهیم شد.',
-                    onAgree: subscribeUser
-                });
-            }
+            showPermissionModal({
+                icon: '<i class="fas fa-bell text-blue-500"></i>',
+                title: 'فعال‌سازی اعلان‌ها',
+                body: 'برای اطلاع‌رسانی از ماموریت‌ها و پیام‌های جدید، لطفاً اجازه ارسال اعلان را به ما بدهید. ما مزاحم شما نخواهیم شد.',
+                onAgree: subscribeUser
+            });
         }
 
         function showDisclaimerModal() {
@@ -4837,47 +4838,23 @@ function refreshAllMapMarkers() {
             }
         }
 
-        async function refreshDataPeriodically() {
-    // Halt refresh if navigating, logged out, a form is active, or another refresh is already in progress.
-    if (isNavigating || !currentUser || isFormActive || isRefreshing) {
-        return;
+        function refreshDataPeriodically() {
+            if (isNavigating) return; // Halt refresh during any navigation
+
+            if (currentUser && !isFormActive) { // Do not refresh if a form element is active
+                loadDataFromServer(); // Load latest data from storage
+                checkForNewNotifications(); // Check for new items and trigger notifications
+                loadPanelData();
+                refreshAllMapMarkers(); // Refresh map markers for all users
+                updateAllNotifications();
+                refreshActiveChats();
+
+                // After all UI is updated, take a new snapshot for the next cycle.
+                updateDataSnapshot();
             }
-
-    isRefreshing = true; // Set the flag to prevent parallel execution
-    try {
-        console.log("🔄 Starting periodic data refresh...");
-        await loadDataFromServer(); 
-
-        // If logout was triggered during fetch, currentUser will be null.
-        if (!currentUser) {
-            console.log("User logged out, stopping refresh cycle.");
-            if (refreshIntervalId) {
-                clearInterval(refreshIntervalId);
-                refreshIntervalId = null;
-            }
-            return; 
-        }
-
-        // Now that we have fresh data, update the UI.
-        console.log("🎨 Rendering UI with new data...");
-        checkForNewNotifications(); 
-        loadPanelData();
-        refreshAllMapMarkers(); 
-        updateAllNotifications();
-        refreshActiveChats();
-
-        // After all UI is updated, take a new snapshot for the next cycle.
-        updateDataSnapshot();
-        console.log("✅ Periodic refresh complete.");
-
-    } catch (error) {
-        console.error("Error during periodic refresh:", error);
-    } finally {
-        isRefreshing = false; // Always reset the flag
-    }
         }
         
-// The refresh interval is now started in showMainApp and cleared on logout.
+        setInterval(refreshDataPeriodically, 5000); // 5 seconds
         setInterval(cleanupOldNotifications, 60 * 60 * 1000); // Every hour
 
 

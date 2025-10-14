@@ -1,115 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const jwt =require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const mongoose = require('mongoose');
-const webPush = require('web-push');
-const axios = require('axios');
-
-// In-memory store for verification codes (for simplicity). 
-// In a production environment, use a more robust store like Redis.
-const verificationCodes = {}; // { phone: { code: '1234', expires: 1678886400000 } }
-
-// ==================== تنظیمات Web Push ====================
-// کلیدهای VAPID باید در محیط واقعی از طریق متغیرهای محیطی مدیریت شوند
-const publicVapidKey = process.env.PUBLIC_VAPID_KEY || 'BBtob9tbvIL8ROQEg_5iwoj7HwMczCn1274nfFNBU-RQ2c7Wahp9YoCrijh5vFlO704Sz_ocBgjEX54GLh7XhZE';
-const privateVapidKey = process.env.PRIVATE_VAPID_KEY || 'GaWpjdeMh_VCel7lrV2jDVYLQRVCkmA3rNjeEKfee5s'; // این کلید را باید مخفی نگه دارید
-
-webPush.setVapidDetails(
-  'mailto:your-email@example.com', // یک ایمیل برای تماس
-  publicVapidKey,
-  privateVapidKey
-);
-
-// ==================== تابع کمکی برای ارسال نوتیفیکیشن ====================
-const sendPushNotification = async (userId, payload) => {
-    try {
-        const user = await User.findOne({ id: userId });
-
-        if (user && user.subscription) {
-            const notificationPayload = JSON.stringify(payload);
-            console.log(`🚀 ارسال نوتیفیکیشن به ${user.fullname}`);
-            await webPush.sendNotification(user.subscription, notificationPayload);
-            console.log(`✅ نوتیفیکیشن با موفقیت به ${user.fullname} ارسال شد.`);
-        } else {
-            console.log(`⚠️ کاربر با شناسه ${userId} یافت نشد یا اشتراک نوتیفیکیشن ندارد.`);
-        }
-    } catch (error) {
-        console.error(`❌ خطا در ارسال نوتیفیکیشن به کاربر ${userId}:`, error.body || error.message);
-        // اگر اشتراک منقضی شده باشد، آن را از دیتابیس حذف می‌کنیم
-        if (error.statusCode === 410 || error.statusCode === 404) {
-            console.log('🗑️ حذف اشتراک نامعتبر برای کاربر:', userId);
-            await User.findOneAndUpdate({ id: userId }, { $set: { subscription: null } });
-        }
-    }
-};
-
 
 const app = express();
-const server = require('http').createServer(app);
-const io = require('socket.io')(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    },
-    pingTimeout: 60000, // 60 ثانیه
-    pingInterval: 25000 // 25 ثانیه
-});
-
-let connectedUsers = {}; // { userId: { socketId: '...', socket: ... } }
-
-io.on('connection', (socket) => {
-    console.log('🔌 یک کاربر جدید متصل شد:', socket.id);
-
-    socket.on('user_connected', (userId) => {
-        // اگر کاربر از قبل در یک سوکت دیگر متصل است، اتصال قبلی را قطع کن
-        if (connectedUsers[userId] && connectedUsers[userId].socketId !== socket.id) {
-            console.log(`🔌 کاربر ${userId} از قبل در سوکت ${connectedUsers[userId].socketId} متصل بود. قطع اتصال قبلی...`);
-            const oldSocket = connectedUsers[userId].socket;
-            if (oldSocket) {
-                oldSocket.disconnect(true);
-            }
-        }
-        
-        console.log(`🔗 کاربر با شناسه ${userId} به سوکت ${socket.id} متصل شد.`);
-        connectedUsers[userId] = { socketId: socket.id, socket: socket };
-        socket.userId = userId; // یک شناسه به سوکت اضافه می‌کنیم برای دسترسی آسان‌تر
-    });
-
-    socket.on('disconnect', () => {
-        // از شناسه ذخیره شده روی سوکت برای حذف استفاده می‌کنیم
-        const userId = socket.userId;
-        if (userId && connectedUsers[userId] && connectedUsers[userId].socketId === socket.id) {
-             console.log(`🔌 کاربر ${userId} با سوکت ${socket.id} قطع شد.`);
-             delete connectedUsers[userId];
-             console.log(`🗑️ کاربر با شناسه ${userId} از لیست حذف شد.`);
-        } else {
-             console.log(`🔌 یک سوکت ناشناس (${socket.id}) قطع شد.`);
-        }
-    });
-});
-
-// تابع کمکی برای ارسال آپدیت به کاربران خاص
-const sendUpdateToUsers = (userIds, event, data) => {
-    if (!Array.isArray(userIds)) {
-        userIds = [userIds];
-    }
-    
-    userIds.forEach(userId => {
-        const userConnection = connectedUsers[userId];
-        if (userConnection && userConnection.socketId) {
-            io.to(userConnection.socketId).emit(event, data);
-            console.log(`🚀 ارسال آپدیت '${event}' به کاربر ${userId} در سوکت ${userConnection.socketId}`);
-        } else {
-            console.log(`⚠️ سوکت برای کاربر ${userId} یافت نشد. آپدیت ارسال نشد.`);
-        }
-    });
-};
-
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@sabalan.liara.cloud:32460/my-app?authSource=admin', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
@@ -150,8 +49,7 @@ const UserSchema = new mongoose.Schema({
     loadCapacity: { type: Number, default: 0 },
     dailyStatusSubmitted: { type: Boolean, default: false },
     lastStatusUpdate: { type: Date },
-    createdAt: { type: Date, default: Date.now },
-    subscription: { type: Object, default: null }
+    createdAt: { type: Date, default: Date.now }
 });
 
 const ConnectionSchema = new mongoose.Schema({
@@ -441,6 +339,20 @@ app.post('/api/users/login', async (req, res) => {
             success: false,
             message: 'خطای سرور در ورود'
         });
+    }
+});
+
+app.post('/api/users/check-phone', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) {
+            return res.status(400).json({ success: false, message: 'شماره تلفن ارائه نشده است' });
+        }
+        const user = await User.findOne({ phone });
+        res.json({ success: true, exists: !!user });
+    } catch (error) {
+        console.error('خطای بررسی شماره تلفن:', error);
+        res.status(500).json({ success: false, message: 'خطای سرور' });
     }
 });
 
@@ -764,14 +676,6 @@ app.post('/api/messages', auth, async (req, res) => {
 
         await newMessage.save();
 
-        // ارسال نوتیفیکیشن به گیرنده
-        const notificationPayload = {
-            title: `پیام جدید از ${senderName}`,
-            body: content || 'شما یک تصویر جدید دریافت کردید.',
-        };
-        sendPushNotification(recipientId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن پیام ناموفق بود:", err));
-
-
         res.status(201).json({
             success: true,
             message: newMessage
@@ -957,17 +861,6 @@ app.post('/api/connections', auth, async (req, res) => {
 
         console.log('✅ اتصال ایجاد شد با ID:', newConnection.id);
 
-        // ارسال آپدیت لحظه‌ای به کاربر هدف (مرکز سورتینگ)
-        sendUpdateToUsers(newConnection.targetId, 'connection_created', newConnection);
-
-        // ارسال نوتیفیکیشن به مرکز سورتینگ
-        const notificationPayload = {
-            title: 'درخواست اتصال جدید',
-            body: `${sourceUser.fullname} می‌خواهد با شما متصل شود.`,
-        };
-        sendPushNotification(targetUser.id, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اتصال ناموفق بود:", err));
-
-
         res.status(201).json({
             success: true,
             connection: newConnection,
@@ -1013,17 +906,6 @@ app.put('/api/connections/:id/approve', auth, async (req, res) => {
 
         console.log('✅ اتصال تأیید شد:', updatedConnection.id);
 
-        // ارسال آپدیت لحظه‌ای به هر دو کاربر
-        sendUpdateToUsers([updatedConnection.sourceId, updatedConnection.targetId], 'connection_updated', updatedConnection);
-
-        // ارسال نوتیفیکیشن به کاربر درخواست‌دهنده
-        const notificationPayload = {
-            title: 'اتصال شما تایید شد',
-            body: `مرکز سورتینگ ${req.user.fullname} درخواست اتصال شما را تایید کرد.`,
-        };
-        sendPushNotification(updatedConnection.sourceId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن تایید اتصال ناموفق بود:", err));
-
-
         res.json({
             success: true,
             connection: updatedConnection,
@@ -1060,19 +942,13 @@ app.put('/api/connections/:id/reject', auth, async (req, res) => {
             });
         }
 
-        // قبل از حذف، اطلاعات اتصال را برای ارسال آپدیت نگه می‌داریم
-        const deletedConnection = await Connection.findOneAndDelete({ id: connectionId });
+        await Connection.findOneAndDelete({ id: connectionId });
 
-        console.log('✅ اتصال رد و حذف شد:', connectionId);
-
-        // ارسال آپدیت لحظه‌ای به کاربر درخواست‌دهنده
-        if (deletedConnection) {
-            sendUpdateToUsers(deletedConnection.sourceId, 'connection_rejected', { id: deletedConnection.id });
-        }
+        console.log('✅ اتصال رد شد:', connectionId);
 
         res.json({
             success: true,
-            message: 'اتصال با موفقیت رد و حذف شد'
+            message: 'اتصال با موفقیت رد شد'
         });
 
     } catch (error) {
@@ -1226,9 +1102,6 @@ app.post('/api/requests', auth, async (req, res) => {
 
         await newRequest.save();
 
-        // ارسال آپدیت لحظه‌ای به مرکز سورتینگ مربوطه
-        sendUpdateToUsers(newRequest.sortingCenterId, 'request_created', newRequest);
-
         res.status(201).json({
             success: true,
             request: newRequest
@@ -1248,52 +1121,47 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         const requestId = parseInt(req.params.id);
         const updates = req.body;
 
-        // Get the request state *before* any updates are applied to correctly calculate capacity changes.
+        // Find the request *before* it's updated to compare old and new statuses
         const originalRequest = await Request.findOne({ id: requestId });
-        if (!originalRequest) {
-            return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
-        }
 
-        // Handle driver capacity changes only if a driver is assigned and the status is changing.
-        if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
+        // If the status is changing, handle capacity updates
+        if (updates.status && originalRequest && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
-            if (driver) {
-                let driverUpdate = {};
 
-                // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
-                if (updates.status === 'in_progress') {
+            if (driver) {
+                // Case 1: Mission is ACCEPTED (status becomes 'in_progress')
+                if (updates.status === 'in_progress' && originalRequest.status === 'assigned') {
+                    let driverUpdate = {};
                     if (originalRequest.type === 'empty') {
-                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
-                }
-                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
-                else if (updates.status === 'completed') {
-                    if (originalRequest.type === 'empty') {
-                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
-                    } else if (originalRequest.type === 'full') {
-                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
-                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
-                    } else if (originalRequest.type === 'delivered_basket') {
-                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
-                        // The quantity here represents the number of missions, which equals the number of baskets.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                    if (Object.keys(driverUpdate).length > 0) {
+                        await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
                     }
                 }
-
-                // Apply the update to the driver if there are changes.
-                if (Object.keys(driverUpdate).length > 0) {
-                    await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
-                    console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
+                // Case 2: Mission is COMPLETED
+                else if (updates.status === 'completed' && originalRequest.status !== 'completed') {
+                    if (originalRequest.type === 'full') {
+                        // Driver delivered full baskets, so their load capacity is restored,
+                        // and they now have empty baskets to return.
+                        await User.findOneAndUpdate(
+                            { id: driver.id },
+                            { 
+                                $inc: { 
+                                    loadCapacity: originalRequest.quantity,
+                                    emptyBaskets: originalRequest.quantity
+                                } 
+                            }
+                        );
+                    }
+                    // For 'empty' type missions, the driver just delivered the empty baskets.
+                    // Their capacity doesn't change upon completion, it was already adjusted at the start.
                 }
             }
         }
-
-        // Now, update the request itself with the new data.
+        
         const updatedRequest = await Request.findOneAndUpdate(
             { id: requestId },
             updates,
@@ -1301,26 +1169,11 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         );
 
         if (!updatedRequest) {
-            // This case should ideally not be hit due to the check at the beginning, but it's a good safeguard.
-            return res.status(404).json({ success: false, message: 'درخواست پس از آپدیت یافت نشد' });
+            return res.status(404).json({
+                success: false,
+                message: 'درخواست یافت نشد'
+            });
         }
-
-        // ارسال نوتیفیکیشن هنگام اختصاص راننده
-        if (updatedRequest.status === 'assigned' && originalRequest.status !== 'assigned') {
-            const notificationPayload = {
-                title: 'ماموریت جدید برای شما',
-                body: `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`,
-            };
-            sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
-        }
-
-        // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
-        const involvedUsers = [updatedRequest.greenhouseId, updatedRequest.sortingCenterId];
-        if (updatedRequest.driverId) {
-            involvedUsers.push(updatedRequest.driverId);
-        }
-        sendUpdateToUsers(involvedUsers, 'request_updated', updatedRequest);
-
 
         res.json({
             success: true,
@@ -1668,102 +1521,12 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
     }
 });
 
-// === ارسال کد تایید پیامکی ===
-app.post('/api/sms/send-verification', async (req, res) => {
-    const { phone } = req.body;
-    if (!phone) {
-        return res.status(400).json({ success: false, message: 'شماره تلفن الزامی است' });
-    }
-
-    // Ensure user exists before sending SMS
-    const user = await User.findOne({ phone });
-    if (!user) {
-        return res.status(404).json({ success: false, message: 'کاربری با این شماره تلفن یافت نشد' });
-    }
-
-    const SMS_API_KEY = process.env.SMS_API_KEY;
-    const SMS_TEMPLATE_ID = process.env.SMS_TEMPLATE_ID || 134626; // Default template ID
-
-    if (!SMS_API_KEY) {
-        console.error('SMS_API_KEY is not defined in environment variables.');
-        return res.status(500).json({ success: false, message: 'سرویس پیامک در حال حاضر در دسترس نیست.' });
-    }
-
-    // Generate a 4-digit verification code
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    const expires = Date.now() + 5 * 60 * 1000; // 5 minutes expiration
-
-    // Store the code
-    verificationCodes[phone] = { code, expires };
-
-    console.log(`Generated verification code for ${phone}: ${code}`); // For debugging
-
-    try {
-        const response = await axios.post('https://api.sms.ir/v1/send/verify', {
-            mobile: phone,
-            templateId: SMS_TEMPLATE_ID,
-            parameters: [
-                { name: 'CODE', value: code }
-            ]
-        }, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-API-KEY': SMS_API_KEY
-            }
-        });
-
-        if (response.data && response.data.status === 1) {
-             res.json({ success: true, message: 'کد تایید با موفقیت ارسال شد.' });
-        } else {
-             console.error('SMS API Error:', response.data);
-             res.status(500).json({ success: false, message: 'خطا در ارسال کد تایید.' });
-        }
-
-    } catch (error) {
-        console.error('Failed to send SMS via API:', error.response ? error.response.data : error.message);
-        res.status(500).json({ success: false, message: 'خطای سرور هنگام ارسال پیامک.' });
-    }
-});
-
-// بررسی وجود کاربر با شماره تلفن (بدون نیاز به احراز هویت)
-app.post('/api/users/check-phone', async (req, res) => {
-    try {
-        const { phone } = req.body;
-        if (!phone) {
-            return res.status(400).json({ success: false, message: 'شماره تلفن الزامی است' });
-        }
-        const user = await User.findOne({ phone });
-        if (user) {
-            res.json({ success: true, exists: true });
-        } else {
-            res.json({ success: true, exists: false });
-        }
-    } catch (error) {
-        console.error('خطای بررسی شماره تلفن:', error);
-        res.status(500).json({ success: false, message: 'خطای سرور در بررسی شماره تلفن' });
-    }
-});
-
 // بازنشانی رمز عبور
 app.post('/api/users/reset-password', async (req, res) => {
     try {
-        const { phone, code, newPassword } = req.body;
-
-        // --- Verification Logic ---
-        const stored = verificationCodes[phone];
-        if (!stored) {
-            return res.status(400).json({ success: false, message: 'ابتدا باید کد تایید را درخواست کنید.' });
-        }
-        if (Date.now() > stored.expires) {
-            delete verificationCodes[phone]; // Clean up expired code
-            return res.status(400).json({ success: false, message: 'کد تایید منقضی شده است. لطفاً دوباره تلاش کنید.' });
-        }
-        if (stored.code !== code) {
-            return res.status(400).json({ success: false, message: 'کد تایید نامعتبر است.' });
-        }
-        // --- End Verification Logic ---
-
+        const { phone, newPassword } = req.body;
         const user = await User.findOne({ phone });
+
         if (!user) {
             return res.status(404).json({
                 success: false,
@@ -1774,8 +1537,6 @@ app.post('/api/users/reset-password', async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         user.password = await bcrypt.hash(newPassword, salt);
         await user.save();
-        
-        delete verificationCodes[phone]; // Clean up used code
 
         res.json({
             success: true,
@@ -1790,45 +1551,6 @@ app.post('/api/users/reset-password', async (req, res) => {
         });
     }
 });
-
-// === اشتراک نوتیفیکیشن ===
-app.post('/api/subscribe', auth, async (req, res) => {
-    try {
-        const subscription = req.body;
-        
-        // Find the user and update their subscription
-        const updatedUser = await User.findOneAndUpdate(
-            { id: req.user.id },
-            { $set: { subscription: subscription } },
-            { new: true }
-        );
-
-        if (!updatedUser) {
-            return res.status(404).json({ success: false, message: 'کاربر یافت نشد' });
-        }
-
-        console.log(`✅ اشتراک برای کاربر ${updatedUser.fullname} ذخیره شد.`);
-
-        // Send a confirmation push notification
-        const payload = JSON.stringify({
-            title: 'اشتراک موفق',
-            body: 'شما با موفقیت برای دریافت اعلان‌ها مشترک شدید!',
-        });
-
-        await webPush.sendNotification(subscription, payload);
-
-        res.status(201).json({ success: true, message: 'اشتراک با موفقیت ذخیره شد' });
-    } catch (error) {
-        console.error('❌ خطا در ذخیره اشتراک:', error);
-        // If the error is from webPush (e.g., subscription expired), it might have a specific status code
-        if (error.statusCode) {
-             res.status(error.statusCode).json({ success: false, message: error.body });
-        } else {
-             res.status(500).json({ success: false, message: 'خطای سرور در ذخیره اشتراک' });
-        }
-    }
-});
-
 
 // === مسیرهای دیباگ ===
 app.get('/api/debug/system', auth, async (req, res) => {
