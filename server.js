@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const app = express();
 
 // اتصال به MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@sabalan.liara.cloud:32460/my-app?authSource=admin', {
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://root:7wVUQin6tGAAJ0nQiF9eA25x@soodcitydb:27017/my-app?authSource=admin', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })
