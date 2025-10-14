@@ -465,8 +465,8 @@ app.get('/api/users/auth', auth, async (req, res) => {
                 address: user.address,
                 licensePlate: user.licensePlate,
                 location: user.location,
-                emptyBaskets: user.emptyBaskets,
-                loadCapacity: user.loadCapacity
+                emptyBaskets: user.emptyBaskets || 0,
+                loadCapacity: user.loadCapacity || 0
             }
         });
     } catch (error) {
@@ -1114,11 +1114,6 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             { new: true }
         );
 
-        // اگر suspended تغییر کرده، آپدیت لحظه‌ای ارسال کن
-        if (suspended !== undefined) {
-            sendUpdateToUsers([updatedConnection.sourceId, updatedConnection.targetId], 'connection_updated', updatedConnection);
-        }
-
         res.json({
             success: true,
             connection: updatedConnection
@@ -1353,6 +1348,13 @@ app.delete('/api/requests/:id', auth, async (req, res) => {
             });
         }
 
+        if (request.greenhouseId !== req.user.id && request.sortingCenterId !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'مجوز حذف این درخواست را ندارید'
+            });
+        }
+
         await Request.findOneAndDelete({ id: requestId });
 
         res.json({
@@ -1580,11 +1582,6 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
                 success: false,
                 message: 'راننده یافت نشد'
             });
-        }
-
-        const missions = await Request.find({ id: { $in: missionIds }, status: 'completed', isConsolidated: false });
-        if (missions.length !== missionIds.length) {
-            return res.status(400).json({ success: false, message: 'برخی ماموریت‌ها یافت نشدند یا قبلاً تحویل شده‌اند.' });
         }
 
         const connection = await Connection.findOne({ 
