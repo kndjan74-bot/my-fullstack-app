@@ -163,6 +163,13 @@ const UserSchema = new mongoose.Schema({
     subscription: { type: Object, default: null }
 });
 
+UserSchema.pre('save', async function (next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('user');
+    }
+    next();
+});
+
 const ConnectionSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
     sourceId: { type: Number, required: true },
@@ -175,6 +182,13 @@ const ConnectionSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     suspended: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
+});
+
+ConnectionSchema.pre('save', async function (next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('connection');
+    }
+    next();
 });
 
 const RequestSchema = new mongoose.Schema({
@@ -210,6 +224,13 @@ const RequestSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+RequestSchema.pre('save', async function (next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('request');
+    }
+    next();
+});
+
 const MessageSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
     adId: { type: Number, required: true },
@@ -221,6 +242,13 @@ const MessageSchema = new mongoose.Schema({
     image: { type: String },
     read: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
+});
+
+MessageSchema.pre('save', async function (next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('message');
+    }
+    next();
 });
 
 const AdSchema = new mongoose.Schema({
@@ -238,6 +266,13 @@ const AdSchema = new mongoose.Schema({
     buyerId: { type: Number },
     date: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
+});
+
+AdSchema.pre('save', async function (next) {
+    if (this.isNew) {
+        this.id = await getNextSequence('ad');
+    }
+    next();
 });
 
 // ایجاد مدل‌ها
@@ -357,7 +392,6 @@ app.post('/api/users/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         const newUser = new User({
-            id: await getNextSequence('user'),
             role,
             fullname,
             province,
@@ -652,7 +686,6 @@ app.post('/api/ads', auth, async (req, res) => {
         const { product, category, quantity, price, emoji, image, adType, seller, sellerId, buyer, buyerId } = req.body;
 
         const newAd = new Ad({
-            id: await getNextSequence('ad'),
             product,
             category,
             quantity: parseInt(quantity),
@@ -761,7 +794,6 @@ app.post('/api/messages', auth, async (req, res) => {
         const { adId, senderId, senderName, recipientId, recipientName, content, image } = req.body;
 
         const newMessage = new Message({
-            id: await getNextSequence('message'),
             adId: parseInt(adId),
             senderId,
             senderName,
@@ -943,7 +975,6 @@ app.post('/api/connections', auth, async (req, res) => {
 
         // ایجاد اتصال جدید
         const connectionData = {
-            id: await getNextSequence('connection'),
             sourceId: req.user.id,
             sourceName: sourceUser.fullname,
             sourceRole: sourceUser.role,
@@ -1219,7 +1250,6 @@ app.post('/api/requests', auth, async (req, res) => {
         const { greenhouseId, greenhouseName, greenhousePhone, greenhouseAddress, sortingCenterId, sortingCenterName, type, quantity, description, location } = req.body;
 
         const newRequest = new Request({
-            id: await getNextSequence('request'),
             greenhouseId,
             greenhouseName,
             greenhousePhone,
