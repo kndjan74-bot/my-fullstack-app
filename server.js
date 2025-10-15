@@ -207,6 +207,7 @@ const RequestSchema = new mongoose.Schema({
     isPickupConfirmed: { type: Boolean, default: false },
     isConsolidated: { type: Boolean, default: false },
     rejectionReason: { type: String },
+    originalRequestIds: { type: [Number], default: [] }, // To track consolidated missions
     assignedAt: { type: Date },
     acceptedAt: { type: Date },
     completedAt: { type: Date },
@@ -1624,13 +1625,11 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             return res.status(400).json({ success: false, message: 'هیچ مرکز سورتینگ متصلی وجود ندارد' });
         }
 
-        // Fetch details of the missions being consolidated
         const missions = await Request.find({ id: { $in: missionIds } });
         if (missions.length !== missionIds.length) {
             return res.status(400).json({ success: false, message: 'یک یا چند ماموریت یافت نشد' });
         }
 
-        // Aggregate data
         const totalBaskets = missions.reduce((sum, mission) => sum + mission.quantity, 0);
         const greenhouseNames = [...new Set(missions.map(m => m.greenhouseName))].join('، ');
         const description = `تحویل ${totalBaskets} سبد از گلخانه‌های: ${greenhouseNames}`;
@@ -1643,32 +1642,22 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             driverName: driver.fullname,
             sortingCenterId: sortingCenter.id,
             sortingCenterName: sortingCenter.fullname,
-            quantity: totalBaskets, // Use the aggregated quantity
-            description: description, // Use the detailed description
+            quantity: totalBaskets,
+            description: description,
             location: sortingCenter.location,
-            greenhouseName: greenhouseNames // Store for reporting
+            greenhouseName: greenhouseNames,
+            originalRequestIds: missionIds // Store the original mission IDs
         });
 
         await newRequest.save();
-
-        await Request.updateMany(
-            { id: { $in: missionIds } },
-            { $set: { isConsolidated: true } }
-        );
+        await Request.updateMany({ id: { $in: missionIds } }, { $set: { isConsolidated: true } });
 
         io.emit('global_data_update');
-
-        res.status(201).json({
-            success: true,
-            request: newRequest
-        });
+        res.status(201).json({ success: true, request: newRequest });
 
     } catch (error) {
         console.error('خطای تحویل تجمیعی:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در تحویل تجمیعی'
-        });
+        res.status(500).json({ success: false, message: 'خطای سرور در تحویل تجمیعی' });
     }
 });
 
@@ -1678,34 +1667,31 @@ app.post('/api/requests/:id/reject', auth, async (req, res) => {
         const requestId = parseInt(req.params.id);
         const { reason } = req.body;
 
-        const updatedRequest = await Request.findOneAndUpdate(
-            { id: requestId },
-            {
-                status: 'rejected',
-                rejectionReason: reason,
-                completedAt: new Date()
-            },
-            { new: true }
-        );
-
-        if (!updatedRequest) {
-            return res.status(404).json({
-                success: false,
-                message: 'درخواست یافت نشد'
-            });
+        const deliveryRequest = await Request.findOne({ id: requestId });
+        if (!deliveryRequest) {
+            return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
-        res.json({
-            success: true,
-            request: updatedRequest
-        });
+        // Revert the original missions
+        if (deliveryRequest.originalRequestIds && deliveryRequest.originalRequestIds.length > 0) {
+            await Request.updateMany(
+                { id: { $in: deliveryRequest.originalRequestIds } },
+                { $set: { isConsolidated: false } }
+            );
+        }
+
+        // Update the delivery request itself to be rejected
+        deliveryRequest.status = 'rejected';
+        deliveryRequest.rejectionReason = reason;
+        deliveryRequest.completedAt = new Date();
+        await deliveryRequest.save();
+
+        io.emit('global_data_update');
+        res.json({ success: true, request: deliveryRequest });
 
     } catch (error) {
         console.error('خطای رد تحویل:', error);
-        res.status(500).json({
-            success: false,
-            message: 'خطای سرور در رد تحویل'
-        });
+        res.status(500).json({ success: false, message: 'خطای سرور در رد تحویل' });
     }
 });
 

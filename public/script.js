@@ -808,6 +808,8 @@ const getApiBaseUrl = () => {
     return 'https://soodcityb.liara.run/api';
   }
 };
+
+const API_BASE_URL = getApiBaseUrl();
         const api = {
             async _fetch(url, options = {}) {
                 const token = sessionStorage.getItem('token');
@@ -4797,43 +4799,46 @@ function refreshAllMapMarkers() {
         }
 
         async function refreshDataPeriodically() {
-    // Halt refresh if navigating, logged out, a form is active, or another refresh is already in progress.
-    if (isNavigating || !currentUser || isFormActive || isRefreshing) {
-        return;
+            if (isNavigating || !currentUser || isFormActive || isRefreshing) {
+                return;
             }
+            isRefreshing = true;
+            try {
+                console.log("🔄 Starting periodic data refresh...");
+                
+                // Fetch only the necessary data instead of everything
+                const [requestsRes, usersRes] = await Promise.all([
+                    api.getAllRequests(),
+                    api.getAllUsers()
+                ]);
 
-    isRefreshing = true; // Set the flag to prevent parallel execution
-    try {
-        console.log("🔄 Starting periodic data refresh...");
-        await loadDataFromServer(); 
+                if (requestsRes.isAuthError || usersRes.isAuthError) {
+                    showToast('نشست شما منقضی شده است. لطفاً دوباره وارد شوید.', 'error');
+                    await logout();
+                    return;
+                }
 
-        // If logout was triggered during fetch, currentUser will be null.
-        if (!currentUser) {
-            console.log("User logged out, stopping refresh cycle.");
-            if (refreshIntervalId) {
-                clearInterval(refreshIntervalId);
-                refreshIntervalId = null;
+                requests = requestsRes.requests || [];
+                users = usersRes.users || [];
+
+                // Update the current user's object with fresh data from the server
+                const freshCurrentUser = users.find(u => u.id === currentUser.id);
+                if (freshCurrentUser) {
+                    currentUser = freshCurrentUser;
+                }
+
+                console.log("🎨 Rendering UI with new data...");
+                loadPanelData(); // This will now use the fresh data
+                refreshAllMapMarkers();
+                updateAllNotifications();
+                refreshActiveChats();
+                updateDataSnapshot();
+                console.log("✅ Periodic refresh complete.");
+            } catch (error) {
+                console.error("Error during periodic refresh:", error);
+            } finally {
+                isRefreshing = false;
             }
-            return; 
-        }
-
-        // Now that we have fresh data, update the UI.
-        console.log("🎨 Rendering UI with new data...");
-        checkForNewNotifications(); 
-        loadPanelData();
-        refreshAllMapMarkers(); 
-        updateAllNotifications();
-        refreshActiveChats();
-
-        // After all UI is updated, take a new snapshot for the next cycle.
-        updateDataSnapshot();
-        console.log("✅ Periodic refresh complete.");
-
-    } catch (error) {
-        console.error("Error during periodic refresh:", error);
-    } finally {
-        isRefreshing = false; // Always reset the flag
-    }
         }
         
 // The refresh interval is now started in showMainApp and cleared on logout.
