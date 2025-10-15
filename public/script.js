@@ -491,7 +491,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
         // Initialize App
         document.addEventListener('DOMContentLoaded', async function() {
             // Check for auth token on load
-            const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+            const token = sessionStorage.getItem('token');
             if (token) {
                 const authResponse = await api.getAuthUser(token);
                 if (authResponse.success) {
@@ -499,7 +499,6 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                     await showMainApp();
                 } else {
                     // Token is invalid or expired
-                    localStorage.removeItem('token');
                     sessionStorage.removeItem('token');
                     updateUiState(UI_STATES.LANDING);
                 }
@@ -796,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-       // --- API ---
+        // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -809,11 +808,9 @@ const getApiBaseUrl = () => {
     return 'https://soodcityb.liara.run/api';
   }
 };
-
-const API_BASE_URL = getApiBaseUrl();
         const api = {
             async _fetch(url, options = {}) {
-                const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+                const token = sessionStorage.getItem('token');
                 const headers = {
                     'Content-Type': 'application/json',
                     ...options.headers,
@@ -845,7 +842,6 @@ const API_BASE_URL = getApiBaseUrl();
             async register(userData) {
                 const response = await this._fetch(`${API_BASE_URL}/users/register`, { method: 'POST', body: JSON.stringify(userData) });
                 if (response.success && response.token) {
-                    localStorage.setItem('token', response.token);
                     sessionStorage.setItem('token', response.token);
                 }
                 return response;
@@ -853,7 +849,6 @@ const API_BASE_URL = getApiBaseUrl();
             async login(phone, password) {
                 const response = await this._fetch(`${API_BASE_URL}/users/login`, { method: 'POST', body: JSON.stringify({ phone, password }) });
                 if (response.success && response.token) {
-                    localStorage.setItem('token', response.token);
                     sessionStorage.setItem('token', response.token);
                 }
                 return response;
@@ -1345,7 +1340,6 @@ const API_BASE_URL = getApiBaseUrl();
                 navigator.serviceWorker.controller.postMessage('stop-tracking');
             }
             
-            localStorage.removeItem('token');
             sessionStorage.removeItem('token');
 
             currentUser = null;
@@ -4931,28 +4925,7 @@ function refreshAllMapMarkers() {
             });
         }
 
-        // --- Real-Time Syncing via Storage Event ---
-        window.addEventListener('storage', async (event) => {
-            // Don't process storage events if user isn't logged in, or a form is being used.
-            if (!currentUser || isFormActive) {
-                return;
-            }
-
-            try {
-                // When any key changes that affects the UI, reload all data from storage
-                // and then re-render the entire panel. This is a simple but effective way
-                // to ensure all tabs stay in sync.
-                if (event.key.startsWith('agritrack_')) {
-                     console.log(`Storage event for ${event.key} detected. Reloading data and refreshing UI.`);
-                    await loadDataFromServer();
-                    loadPanelData();
-                    updateAllNotifications(); // Also refresh notification badges
-                    refreshActiveChats();
-                }
-            } catch (e) {
-                console.error('Error processing storage event:', e);
-            }
-        });
+        // Storage event listener is removed as it's no longer needed with sessionStorage.
         // New Landing Page Background Animation
         const canvas = document.createElement('canvas');
         const container = document.getElementById('landing-bg-animation');

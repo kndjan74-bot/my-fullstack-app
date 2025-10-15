@@ -57,35 +57,33 @@ const io = require('socket.io')(server, {
     pingInterval: 25000 // 25 ثانیه
 });
 
-let connectedUsers = {}; // { userId: { socketId: '...', socket: ... } }
+let connectedUsers = {}; // { userId: [socket1, socket2, ...] }
 
 io.on('connection', (socket) => {
     console.log('🔌 یک کاربر جدید متصل شد:', socket.id);
 
     socket.on('user_connected', (userId) => {
-        // اگر کاربر از قبل در یک سوکت دیگر متصل است، اتصال قبلی را قطع کن
-        if (connectedUsers[userId] && connectedUsers[userId].socketId !== socket.id) {
-            console.log(`🔌 کاربر ${userId} از قبل در سوکت ${connectedUsers[userId].socketId} متصل بود. قطع اتصال قبلی...`);
-            const oldSocket = connectedUsers[userId].socket;
-            if (oldSocket) {
-                oldSocket.disconnect(true);
-            }
+        if (!userId) return;
+        socket.userId = userId;
+        if (!connectedUsers[userId]) {
+            connectedUsers[userId] = [];
         }
-        
-        console.log(`🔗 کاربر با شناسه ${userId} به سوکت ${socket.id} متصل شد.`);
-        connectedUsers[userId] = { socketId: socket.id, socket: socket };
-        socket.userId = userId; // یک شناسه به سوکت اضافه می‌کنیم برای دسترسی آسان‌تر
+        connectedUsers[userId].push(socket);
+        console.log(`🔗 کاربر ${userId} به لیست متصلین اضافه شد. تعداد اتصالات: ${connectedUsers[userId].length}`);
     });
 
     socket.on('disconnect', () => {
-        // از شناسه ذخیره شده روی سوکت برای حذف استفاده می‌کنیم
         const userId = socket.userId;
-        if (userId && connectedUsers[userId] && connectedUsers[userId].socketId === socket.id) {
-             console.log(`🔌 کاربر ${userId} با سوکت ${socket.id} قطع شد.`);
-             delete connectedUsers[userId];
-             console.log(`🗑️ کاربر با شناسه ${userId} از لیست حذف شد.`);
+        if (userId && connectedUsers[userId]) {
+            connectedUsers[userId] = connectedUsers[userId].filter(s => s.id !== socket.id);
+            if (connectedUsers[userId].length === 0) {
+                delete connectedUsers[userId];
+                console.log(`🗑️ تمام اتصالات کاربر ${userId} قطع شد. کاربر از لیست حذف شد.`);
+            } else {
+                console.log(`🔌 یکی از اتصالات کاربر ${userId} قطع شد. تعداد اتصالات باقی‌مانده: ${connectedUsers[userId].length}`);
+            }
         } else {
-             console.log(`🔌 یک سوکت ناشناس (${socket.id}) قطع شد.`);
+            console.log(`🔌 یک سوکت ناشناس (${socket.id}) قطع شد.`);
         }
     });
 });
@@ -97,12 +95,14 @@ const sendUpdateToUsers = (userIds, event, data) => {
     }
     
     userIds.forEach(userId => {
-        const userConnection = connectedUsers[userId];
-        if (userConnection && userConnection.socketId) {
-            io.to(userConnection.socketId).emit(event, data);
-            console.log(`🚀 ارسال آپدیت '${event}' به کاربر ${userId} در سوکت ${userConnection.socketId}`);
+        const userSockets = connectedUsers[userId];
+        if (userSockets && userSockets.length > 0) {
+            console.log(`🚀 ارسال آپدیت '${event}' به ${userSockets.length} اتصال برای کاربر ${userId}`);
+            userSockets.forEach(socket => {
+                socket.emit(event, data);
+            });
         } else {
-            console.log(`⚠️ سوکت برای کاربر ${userId} یافت نشد. آپدیت ارسال نشد.`);
+            console.log(`⚠️ سوکتی برای کاربر ${userId} یافت نشد. آپدیت ارسال نشد.`);
         }
     });
 };
