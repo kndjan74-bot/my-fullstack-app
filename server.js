@@ -672,6 +672,9 @@ app.post('/api/ads', auth, async (req, res) => {
 
         await newAd.save();
 
+        // 🚀 Real-time update
+        io.emit('global_data_update');
+
         res.status(201).json({
             success: true,
             ad: newAd
@@ -710,6 +713,9 @@ app.delete('/api/ads/:id', auth, async (req, res) => {
             Ad.findOneAndDelete({ id: adId }),
             Message.deleteMany({ adId: adId })
         ]);
+
+        // 🚀 Real-time update
+        io.emit('global_data_update');
 
         res.json({
             success: true,
@@ -783,6 +789,8 @@ app.post('/api/messages', auth, async (req, res) => {
         };
         sendPushNotification(recipientId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن پیام ناموفق بود:", err));
 
+        // 🚀 Real-time update
+        io.emit('global_data_update');
 
         res.status(201).json({
             success: true,
@@ -812,6 +820,9 @@ app.put('/api/messages/conversation/:conversationId/read', auth, async (req, res
             { $set: { read: true } }
         );
 
+        // 🚀 Real-time update
+        io.emit('global_data_update');
+
         res.json({
             success: true,
             message: 'مکالمه به عنوان خوانده شده علامت گذاری شد'
@@ -837,6 +848,9 @@ app.delete('/api/messages/conversation/:conversationId', auth, async (req, res) 
                 { senderId: user2Id, recipientId: user1Id }
             ]
         });
+
+        // 🚀 Real-time update
+        io.emit('global_data_update');
 
         res.json({
             success: true,
@@ -1126,6 +1140,9 @@ app.put('/api/connections/:id', auth, async (req, res) => {
             { new: true }
         );
 
+        // 🚀 Real-time update
+        io.emit('global_data_update');
+
         res.json({
             success: true,
             connection: updatedConnection
@@ -1160,6 +1177,9 @@ app.delete('/api/connections/:id', auth, async (req, res) => {
         }
 
         await Connection.findOneAndDelete({ id: connectionId });
+
+        // 🚀 Real-time update
+        io.emit('global_data_update');
 
         res.json({
             success: true,

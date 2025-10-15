@@ -796,7 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-        // --- API ---
+         // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -886,74 +886,41 @@ const API_BASE_URL = getApiBaseUrl();
 
             // --- Ads ---
             async createAd(adData) {
-                const response = await this._fetch(`${API_BASE_URL}/ads`, { method: 'POST', body: JSON.stringify(adData) });
-                if (response.success) {
-                    await loadDataFromServer();
-                    applyMarketFilters(true);
-                }
-                return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                return this._fetch(`${API_BASE_URL}/ads`, { method: 'POST', body: JSON.stringify(adData) });
             },
             async deleteAd(adId) {
-                const response = await this._fetch(`${API_BASE_URL}/ads/${adId}`, { method: 'DELETE' });
-                if (response.success) {
-                    await loadDataFromServer();
-                    applyMarketFilters(true);
-                }
-                return response;
+                 // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                return this._fetch(`${API_BASE_URL}/ads/${adId}`, { method: 'DELETE' });
             },
 
             // --- Messages ---
             async createMessage(messageData) {
-                const response = await this._fetch(`${API_BASE_URL}/messages`, { method: 'POST', body: JSON.stringify(messageData) });
-                if (response.success) {
-                    await loadDataFromServer();
-                    refreshActiveChats();
-                    updateAllNotifications();
-                }
-                return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                // The optimistic update is now handled by the socket listener.
+                return this._fetch(`${API_BASE_URL}/messages`, { method: 'POST', body: JSON.stringify(messageData) });
             },
             async deleteConversation(conversationId) {
-                const response = await this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}`, { method: 'DELETE' });
-                if (response.success) {
-                    await loadDataFromServer();
-                    refreshActiveChats();
-                    updateAllNotifications();
-                }
-                return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}`, { method: 'DELETE' });
             },
             async markConversationAsRead(conversationId) {
-                 const response = await this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}/read`, { method: 'PUT' });
-                 if (response.success) {
-                     await loadDataFromServer();
-                     updateAllNotifications();
-                 }
-                 return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                 return this._fetch(`${API_BASE_URL}/messages/conversation/${conversationId}/read`, { method: 'PUT' });
             },
             
             // --- Connections ---
             async createConnection(targetId) {
-                const response = await this._fetch(`${API_BASE_URL}/connections`, { method: 'POST', body: JSON.stringify({ targetId }) });
-                if (response.success) {
-                    await loadDataFromServer();
-                    loadPanelData();
-                }
-                return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                return this._fetch(`${API_BASE_URL}/connections`, { method: 'POST', body: JSON.stringify({ targetId }) });
             },
             async updateConnection(connectionId, updates) {
-                 const response = await this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(updates) });
-                 if (response.success) {
-                     await loadDataFromServer();
-                     loadPanelData();
-                 }
-                 return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                 return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(updates) });
             },
             async deleteConnection(connectionId) {
-                const response = await this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'DELETE' });
-                if (response.success) {
-                    await loadDataFromServer();
-                    loadPanelData();
-                }
-                return response;
+                // 🚀 PERFORMANCE: Rely on socket event for UI update.
+                return this._fetch(`${API_BASE_URL}/connections/${connectionId}`, { method: 'DELETE' });
             },
 
             // --- Requests ---
@@ -4911,8 +4878,23 @@ function refreshAllMapMarkers() {
                 return;
             }
 
+            const handleUpdate = (source) => {
+                console.log(`📢 Real-time update received via ${source}. Refreshing data and UI.`);
+                if (currentUser) {
+                    // This is the core of the real-time update.
+                    // It fetches the latest data and redraws the necessary parts of the UI
+                    // without a full page reload, solving the manual refresh issue.
+                    refreshDataPeriodically(); 
+                }
+            };
+
+            // A general event for most CUD operations (Create, Update, Delete)
+            socket.on('global_data_update', () => handleUpdate('global_data_update'));
+            
+            // A more specific event for the most frequent operation: request updates.
             socket.on('request_updated', (updatedRequest) => {
-                console.log(`📢 Real-time update received for request #${updatedRequest.id}`);
+                console.log(`📢 Specific update for request #${updatedRequest.id}`);
+                if (!requests) requests = [];
                 const index = requests.findIndex(r => r.id === updatedRequest.id);
                 if (index !== -1) {
                     requests[index] = updatedRequest;
@@ -4920,15 +4902,17 @@ function refreshAllMapMarkers() {
                     requests.push(updatedRequest);
                 }
 
-                // Re-render all relevant parts of the UI
+                // Directly re-render the UI without a full data fetch.
                 if (currentUser) {
                     loadPanelData();
                     refreshAllMapMarkers();
                     updateAllNotifications();
+                    refreshActiveChats();
                 }
             });
 
-            // You can add more listeners here, e.g., for 'user_updated' if needed
+            // This event can be used to force a refresh from the server if needed.
+            socket.on('force_refresh', () => handleUpdate('force_refresh'));
         }
 
         // --- Real-Time Syncing via Storage Event ---
