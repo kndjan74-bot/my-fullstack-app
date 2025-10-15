@@ -1302,20 +1302,20 @@ app.put('/api/requests/:id', auth, async (req, res) => {
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
                 }
-                // LOGIC FOR DECREMENTING CAPACITY (WHEN COMPLETING A MISSION)
+                // LOGIC FOR RELEASING CAPACITY (WHEN COMPLETING A MISSION)
                 else if (updates.status === 'completed') {
                     if (originalRequest.type === 'empty') {
-                        // Mission: Deliver EMPTY baskets. Driver's empty basket count decreases.
-                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                        // Mission: Deliver EMPTY baskets. Driver now has more empty baskets.
+                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Mission: Deliver FULL baskets. Driver's load capacity decreases.
-                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                        // Mission: Pick up FULL baskets. Driver now has more load capacity.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
                     }
-                    // Note: 'delivered_basket' does not affect these two capacities.
                 }
                 if (Object.keys(driverUpdate).length > 0) {
-                    await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
-                    console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
+                    const updatedDriver = await User.findOneAndUpdate({ id: driver.id }, driverUpdate, { new: true });
+                    console.log(`✅ ظرفیت راننده ${updatedDriver.fullname} آپدیت شد:`, driverUpdate);
+                    sendUpdateToUsers(driver.id, 'user_updated', updatedDriver);
                 }
             }
         }
@@ -1612,26 +1612,28 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
     try {
         const { missionIds } = req.body;
         const driver = await User.findOne({ id: req.user.id });
-        
+
         if (!driver) {
-            return res.status(404).json({
-                success: false,
-                message: 'راننده یافت نشد'
-            });
+            return res.status(404).json({ success: false, message: 'راننده یافت نشد' });
         }
 
-        const connection = await Connection.findOne({ 
-            sourceId: req.user.id, 
-            status: 'approved' 
-        });
+        const connection = await Connection.findOne({ sourceId: req.user.id, status: 'approved' });
         const sortingCenter = connection ? await User.findOne({ id: connection.targetId }) : null;
 
         if (!sortingCenter) {
-            return res.status(400).json({
-                success: false,
-                message: 'هیچ مرکز سورتینگ متصلی وجود ندارد'
-            });
+            return res.status(400).json({ success: false, message: 'هیچ مرکز سورتینگ متصلی وجود ندارد' });
         }
+
+        // Fetch details of the missions being consolidated
+        const missions = await Request.find({ id: { $in: missionIds } });
+        if (missions.length !== missionIds.length) {
+            return res.status(400).json({ success: false, message: 'یک یا چند ماموریت یافت نشد' });
+        }
+
+        // Aggregate data
+        const totalBaskets = missions.reduce((sum, mission) => sum + mission.quantity, 0);
+        const greenhouseNames = [...new Set(missions.map(m => m.greenhouseName))].join('، ');
+        const description = `تحویل ${totalBaskets} سبد از گلخانه‌های: ${greenhouseNames}`;
 
         const newRequest = new Request({
             id: await getNextSequence('request'),
@@ -1641,9 +1643,10 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             driverName: driver.fullname,
             sortingCenterId: sortingCenter.id,
             sortingCenterName: sortingCenter.fullname,
-            quantity: missionIds.length,
-            description: 'تحویل مرکزی بارهای تکمیل شده',
-            location: sortingCenter.location
+            quantity: totalBaskets, // Use the aggregated quantity
+            description: description, // Use the detailed description
+            location: sortingCenter.location,
+            greenhouseName: greenhouseNames // Store for reporting
         });
 
         await newRequest.save();
@@ -1652,6 +1655,8 @@ app.post('/api/requests/consolidate', auth, async (req, res) => {
             { id: { $in: missionIds } },
             { $set: { isConsolidated: true } }
         );
+
+        io.emit('global_data_update');
 
         res.status(201).json({
             success: true,

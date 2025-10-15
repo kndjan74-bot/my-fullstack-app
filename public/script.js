@@ -796,7 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-         // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -4878,41 +4878,57 @@ function refreshAllMapMarkers() {
                 return;
             }
 
-            const handleUpdate = (source) => {
-                console.log(`📢 Real-time update received via ${source}. Refreshing data and UI.`);
+            // Central handler for all data refreshes to avoid full page reloads
+            const refreshUI = () => {
                 if (currentUser) {
-                    // This is the core of the real-time update.
-                    // It fetches the latest data and redraws the necessary parts of the UI
-                    // without a full page reload, solving the manual refresh issue.
-                    refreshDataPeriodically(); 
+                    console.log('🚀 Refreshing UI with new data...');
+                    loadPanelData();
+                    refreshAllMapMarkers();
+                    updateAllNotifications();
+                    refreshActiveChats();
                 }
             };
 
-            // A general event for most CUD operations (Create, Update, Delete)
-            socket.on('global_data_update', () => handleUpdate('global_data_update'));
-            
-            // A more specific event for the most frequent operation: request updates.
+            // Generic listener for broad updates
+            socket.on('global_data_update', async () => {
+                console.log('📢 Received global_data_update. Fetching all new data.');
+                await loadDataFromServer();
+                refreshUI();
+            });
+
+            // Specific listener for request updates
             socket.on('request_updated', (updatedRequest) => {
-                console.log(`📢 Specific update for request #${updatedRequest.id}`);
-                if (!requests) requests = [];
+                console.log(`📢 Received request_updated for ID: ${updatedRequest.id}`);
                 const index = requests.findIndex(r => r.id === updatedRequest.id);
                 if (index !== -1) {
                     requests[index] = updatedRequest;
                 } else {
                     requests.push(updatedRequest);
                 }
-
-                // Directly re-render the UI without a full data fetch.
-                if (currentUser) {
-                    loadPanelData();
-                    refreshAllMapMarkers();
-                    updateAllNotifications();
-                    refreshActiveChats();
-                }
+                refreshUI();
             });
 
-            // This event can be used to force a refresh from the server if needed.
-            socket.on('force_refresh', () => handleUpdate('force_refresh'));
+            // Specific listener for user updates (like location or capacity)
+            socket.on('user_updated', (updatedUser) => {
+                 console.log(`📢 Received user_updated for ID: ${updatedUser.id}`);
+                const index = users.findIndex(u => u.id === updatedUser.id);
+                if (index !== -1) {
+                    users[index] = { ...users[index], ...updatedUser };
+                     if (currentUser && currentUser.id === updatedUser.id) {
+                        currentUser = { ...currentUser, ...updatedUser };
+                    }
+                } else {
+                    users.push(updatedUser);
+                }
+                refreshUI();
+            });
+
+            // Listener for forcing a refresh from the server
+            socket.on('force_refresh', async () => {
+                console.log('📢 Received force_refresh. Fetching all new data.');
+                await loadDataFromServer();
+                refreshUI();
+            });
         }
 
         // --- Real-Time Syncing via Storage Event ---
