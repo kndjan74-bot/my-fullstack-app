@@ -170,22 +170,10 @@ const ConnectionSchema = new mongoose.Schema({
 
 const RequestSchema = new mongoose.Schema({
     id: { type: Number, unique: true },
-    greenhouseId: { 
-        type: Number, 
-        required: function() { return this.type !== 'delivered_basket'; } 
-    },
-    greenhouseName: { 
-        type: String, 
-        required: function() { return this.type !== 'delivered_basket'; } 
-    },
-    greenhousePhone: { 
-        type: String, 
-        required: function() { return this.type !== 'delivered_basket'; } 
-    },
-    greenhouseAddress: { 
-        type: String, 
-        required: function() { return this.type !== 'delivered_basket'; } 
-    },
+    greenhouseId: { type: Number, required: true },
+    greenhouseName: { type: String, required: true },
+    greenhousePhone: { type: String, required: true },
+    greenhouseAddress: { type: String, required: true },
     sortingCenterId: { type: Number, required: true },
     sortingCenterName: { type: String, required: true },
     driverId: { type: Number },
@@ -1266,40 +1254,44 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست یافت نشد' });
         }
 
-        // The complex conditional logic is removed. The server now trusts the client
-        // to send the correct updates at the correct time. The UI logic will enforce the sequence.
-
         // Handle driver capacity changes only if a driver is assigned and the status is changing.
         if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
+
                 // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
                 if (updates.status === 'in_progress') {
                     if (originalRequest.type === 'empty') {
+                        // Driver picks up empty baskets from sorting, their available empty baskets decrease.
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
+                        // Driver picks up full baskets from greenhouse, their available load capacity decreases.
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
                 }
-                // LOGIC FOR DECREMENTING CAPACITY (WHEN COMPLETING A MISSION)
+                // LOGIC FOR INCREMENTING/RESTORING CAPACITY (WHEN COMPLETING A MISSION)
                 else if (updates.status === 'completed') {
                     if (originalRequest.type === 'empty') {
-                        // Mission: Deliver EMPTY baskets. Driver's empty basket count decreases.
-                        driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                        // Driver delivered empty baskets to greenhouse. Their load capacity is now free again.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Mission: Deliver FULL baskets. Driver's load capacity decreases.
-                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                        // Driver delivered full baskets to greenhouse. They now have that many empty baskets.
+                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
+                    } else if (originalRequest.type === 'delivered_basket') {
+                        // Driver delivered empty baskets back to sorting center. Their load capacity is now free.
+                        // The quantity here represents the number of missions, which equals the number of baskets.
+                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
                     }
-                    // Note: 'delivered_basket' does not affect these two capacities.
                 }
+
+                // Apply the update to the driver if there are changes.
                 if (Object.keys(driverUpdate).length > 0) {
                     await User.findOneAndUpdate({ id: driver.id }, driverUpdate);
                     console.log(`✅ ظرفیت راننده ${driver.fullname} آپدیت شد:`, driverUpdate);
                 }
             }
         }
-        // --- End of New Logic ---
 
         // Now, update the request itself with the new data.
         const updatedRequest = await Request.findOneAndUpdate(
@@ -1322,21 +1314,13 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
 
-        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران مرتبط**
-        const involvedUsers = [
-            updatedRequest.greenhouseId, 
-            updatedRequest.sortingCenterId
-        ].filter(Boolean); // Filter out null/undefined IDs
-        
+        // ارسال آپدیت لحظه‌ای برای تغییرات وضعیت درخواست
+        const involvedUsers = [updatedRequest.greenhouseId, updatedRequest.sortingCenterId];
         if (updatedRequest.driverId) {
             involvedUsers.push(updatedRequest.driverId);
         }
+        sendUpdateToUsers(involvedUsers, 'request_updated', updatedRequest);
 
-        // Use a Set to ensure unique user IDs before broadcasting
-        const uniqueInvolvedUsers = [...new Set(involvedUsers)];
-
-        console.log(`🚀 Broadcasting request update for #${updatedRequest.id} to users:`, uniqueInvolvedUsers);
-        sendUpdateToUsers(uniqueInvolvedUsers, 'request_updated', updatedRequest);
 
         res.json({
             success: true,

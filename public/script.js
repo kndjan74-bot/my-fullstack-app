@@ -32,14 +32,12 @@
             landingPage.style.display = 'none';
             authScreen.style.display = 'none';
             mainApp.style.display = 'none';
-            bottomNav.classList.add('hidden');
-            mainApp.style.paddingBottom = '0';
+            bottomNav.classList.add('hidden'); // Hide nav by default
+            mainApp.style.paddingBottom = '0'; // Reset padding
+            loginForm.style.display = 'none';
+            registerForm.style.display = 'none';
+            recoveryForm.style.display = 'none';
             
-            // Instead of display, we toggle the 'hidden' class for the forms
-            loginForm.classList.add('hidden');
-            registerForm.classList.add('hidden');
-            recoveryForm.classList.add('hidden');
-
             document.body.className = ''; // Clear body classes
 
             switch(state) {
@@ -49,23 +47,23 @@
                     break;
                 case UI_STATES.AUTH_LOGIN:
                     authScreen.style.display = 'flex';
-                    loginForm.classList.remove('hidden');
+                    loginForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_REGISTER:
                     authScreen.style.display = 'flex';
-                    registerForm.classList.remove('hidden');
+                    registerForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.AUTH_RECOVERY:
                     authScreen.style.display = 'flex';
-                    recoveryForm.classList.remove('hidden');
+                    recoveryForm.style.display = 'block';
                     document.body.className = 'gradient-bg min-h-screen';
                     break;
                 case UI_STATES.MAIN_APP:
                     mainApp.style.display = 'block';
-                    bottomNav.classList.remove('hidden');
-                    mainApp.style.paddingBottom = '80px';
+                    bottomNav.classList.remove('hidden'); // Show nav for main app
+                    mainApp.style.paddingBottom = '80px'; // Add padding for nav
                     document.body.className = 'bg-gray-100';
                     break;
             }
@@ -405,7 +403,6 @@
         let isNavigating = false; // Flag to pause refresh during any navigation
 let isRefreshing = false; // New flag to prevent parallel refreshes
 let refreshIntervalId = null; // To hold the ID of the refresh interval
-        let socket = null; // To hold the socket connection
         const orsApiKey = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImIxMGZlYjc0NjIwMzQzOWE5ZDg0OGVjZGZiMTNjZmRlIiwiaCI6Im11cm11cjY0In0=';
 
         // Map layer management
@@ -645,18 +642,6 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                         accordionItem.classList.add('open');
                         accordionContent.style.maxHeight = accordionContent.scrollHeight + "px";
                         
-                        // --- Fix for map loading issue ---
-                        setTimeout(() => {
-                            const mapElement = accordionItem.querySelector('.map-container');
-                            if (mapElement) {
-                                const mapId = mapElement.id;
-                                const mapInstance = getMapInstance(mapId);
-                                if (mapInstance) {
-                                    mapInstance.invalidateSize();
-                                }
-                            }
-                        }, 350); // A little longer than the transition duration
-
                         // Mark items as "seen" when accordion opens
                         const contentDiv = accordionContent.querySelector('div[id]');
                         if (contentDiv) {
@@ -796,7 +781,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-        // --- API ---
+         // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2412,19 +2397,6 @@ function refreshAllMapMarkers() {
             }
             refreshIntervalId = setInterval(refreshDataPeriodically, 10000); // 10 seconds
             console.log(`Periodic refresh started with interval ID ${refreshIntervalId}.`);
-
-            // Connect to Socket.IO and setup listeners
-            if (typeof io !== 'undefined' && !socket) {
-                socket = io('https://soodcity.liara.run'); // Connect to your server
-                window.socket = socket; // Make it globally accessible for listeners
-                
-                socket.on('connect', () => {
-                    console.log('🔗 Connected to Socket.IO server!');
-                    socket.emit('user_connected', currentUser.id);
-                });
-
-                setupSocketListeners();
-            }
         }
 
         function getRoleTitle(role) {
@@ -2992,6 +2964,7 @@ function refreshAllMapMarkers() {
         }
 
         async function confirmSecondStep(requestId) {
+            // No need to load data first, the check is implicit in the API call's success.
             const request = requests.find(r => r.id === requestId);
 
             if (request && request.isPickupConfirmed) {
@@ -3005,23 +2978,27 @@ function refreshAllMapMarkers() {
 
                 if (response.success) {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
-                    await loadDataFromServer(); // Force refresh
                     
+                    // Stop tracking and clear the route from the map for the driver.
                     if (currentUser.role === 'driver') {
                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
-                        loadDriverActiveMission(); // Immediately re-render the panel
-                        loadDriverStatus();
                     }
+                    
+                    // The API call already reloaded data, panels, and map markers.
+                    // Just ensure notifications are also updated.
                     updateAllNotifications();
+
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
             } else {
-                const toastMessage = 'ابتدا باید طرف مقابل تحویل را تایید کند.';
+                const toastMessage = (currentUser.role === 'driver')
+                    ? 'ابتدا باید گلخانه‌دار دریافت را تایید کند.'
+                    : 'ابتدا باید راننده دریافت را تایید کند.';
                 showToast(toastMessage, 'error');
             }
         }
@@ -3119,33 +3096,33 @@ function refreshAllMapMarkers() {
                                 
 
                                 
-                                <!-- New Logic: Empty Basket for Greenhouse -->
-                                ${request.status === 'in_progress' && request.type === 'empty' && !request.isPickupConfirmed ? `
-                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-                                        <p class="text-green-700 font-medium mb-2">راننده در حال تحویل سبد خالی است.</p>
-                                        <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                            <i class="fas fa-check ml-2"></i>تحویل گرفتم
-                                        </button>
-                                    </div>
-                                ` : ''}
-                                ${request.status === 'in_progress' && request.type === 'empty' && request.isPickupConfirmed ? `
-                                     <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                        <p class="text-gray-600">منتظر تایید نهایی راننده...</p>
+                                ${request.status === 'in_progress' && request.type === 'full' ? `
+                                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                        <div class="text-center mb-4">
+                                            <div class="text-blue-700 font-medium mb-2">راننده در محل شماست</div>
+                                            <div class="text-blue-600 text-sm">لطفا پس از تایید راننده، تحویل بار را تایید کنید</div>
+                                        </div>
+                                        <div class="flex justify-center">
+                                            <button onclick="confirmSecondStep(${request.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg ${!request.isPickupConfirmed ? 'opacity-50 cursor-not-allowed' : ''}" ${!request.isPickupConfirmed ? 'disabled' : ''}>
+                                                <i class="fas fa-truck-loading ml-2"></i>
+                                                تحویل دادم
+                                            </button>
+                                        </div>
                                     </div>
                                 ` : ''}
 
-                                <!-- New Logic: Full Basket for Greenhouse -->
-                                ${request.status === 'in_progress' && request.type === 'full' && !request.isPickupConfirmed ? `
-                                    <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                        <p class="text-gray-600">منتظر تایید دریافت بار توسط راننده...</p>
-                                    </div>
-                                ` : ''}
-                                ${request.status === 'in_progress' && request.type === 'full' && request.isPickupConfirmed ? `
-                                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                                        <p class="text-blue-700 font-medium mb-2">راننده بار را تحویل گرفت.</p>
-                                        <button onclick="confirmSecondStep(${request.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                            <i class="fas fa-truck-loading ml-2"></i>تکمیل ماموریت (تحویل دادم)
-                                        </button>
+                                ${request.status === 'in_progress' && request.type === 'empty' ? `
+                                    <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                                        <div class="text-center mb-4">
+                                            <div class="text-green-700 font-medium mb-2">راننده سبدهای خالی را تحویل می‌دهد</div>
+                                            <div class="text-green-600 text-sm">لطفاً دریافت سبدها را تایید کنید</div>
+                                        </div>
+                                        <div class="flex justify-center">
+                                            <button onclick="confirmFirstStep(${request.id})" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg font-semibold transition-all transform hover:scale-105 shadow-lg">
+                                                <i class="fas fa-check-circle ml-2"></i>
+                                                تحویل گرفتم
+                                            </button>
+                                        </div>
                                     </div>
                                 ` : ''}
                             </div>
@@ -3680,34 +3657,28 @@ function refreshAllMapMarkers() {
                             مسیریابی خارجی
                         </button>
                         ${(activeMission.type !== 'sorting_delivery' && activeMission.type !== 'delivered_basket') ? `
-                            <!-- New Logic: Empty Basket for Driver -->
-                            ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                    <p class="text-gray-600">منتظر تایید دریافت سبدها توسط گلخانه‌دار...</p>
-                                </div>
+                            <!-- Full Basket Logic for Driver -->
+                            ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
+                                <button onclick="confirmFirstStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">
+                                    تحویل گرفتم
+                                </button>
                             ` : ''}
-                            ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
-                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                                    <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد.</p>
-                                    <button onclick="confirmSecondStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                        <i class="fas fa-check-double ml-2"></i>تکمیل ماموریت (تحویل دادم)
-                                    </button>
+                            ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
+                                <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
+                                    منتظر تایید گلخانه‌دار...
                                 </div>
                             ` : ''}
 
-                            <!-- New Logic: Full Basket for Driver -->
-                            ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-                                    <p class="text-green-700 font-medium mb-2">در حال تحویل گرفتن بار از گلخانه.</p>
-                                    <button onclick="confirmFirstStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                        <i class="fas fa-box-check ml-2"></i>تحویل گرفتم
-                                    </button>
+                            <!-- Empty Basket Logic for Driver -->
+                            ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
+                                <div class="bg-gray-200 text-gray-600 px-4 py-2 rounded text-sm">
+                                    منتظر تایید گلخانه‌دار...
                                 </div>
                             ` : ''}
-                            ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                    <p class="text-gray-600">منتظر تایید نهایی گلخانه‌دار...</p>
-                                </div>
+                            ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
+                                <button onclick="confirmSecondStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm">
+                                    تحویل دادم
+                                </button>
                             ` : ''}
                         ` : ''}
                     </div>
@@ -4899,33 +4870,6 @@ function refreshAllMapMarkers() {
             }
         }
 
-        // --- Real-Time Syncing via Socket.IO ---
-        function setupSocketListeners() {
-            if (typeof io === 'undefined' || !window.socket) {
-                console.warn("Socket.IO client not available, real-time updates will be disabled.");
-                return;
-            }
-
-            socket.on('request_updated', (updatedRequest) => {
-                console.log(`📢 Real-time update received for request #${updatedRequest.id}`);
-                const index = requests.findIndex(r => r.id === updatedRequest.id);
-                if (index !== -1) {
-                    requests[index] = updatedRequest;
-                } else {
-                    requests.push(updatedRequest);
-                }
-
-                // Re-render all relevant parts of the UI
-                if (currentUser) {
-                    loadPanelData();
-                    refreshAllMapMarkers();
-                    updateAllNotifications();
-                }
-            });
-
-            // You can add more listeners here, e.g., for 'user_updated' if needed
-        }
-
         // --- Real-Time Syncing via Storage Event ---
         window.addEventListener('storage', async (event) => {
             // Don't process storage events if user isn't logged in, or a form is being used.
@@ -5044,16 +4988,10 @@ function refreshAllMapMarkers() {
             if (response.success) {
                 showToast('تحویل با موفقیت تایید شد.', 'success');
                 
-                await loadDataFromServer(); // Force refresh
+                await loadDataFromServer();
                 refreshAllMapMarkers();
                 loadIncomingDeliveries();
                 filterSortingReports();
-                
-                // Also refresh driver panel if the current user is a driver
-                if (currentUser.role === 'driver') {
-                    loadDriverActiveMission();
-                    loadDriverStatus();
-                }
             } else {
                 showToast(response.message || 'خطا در تایید تحویل.', 'error');
             }
