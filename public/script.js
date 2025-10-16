@@ -789,13 +789,25 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                 supplyAds = allAds.filter(ad => ad.adType === 'supply');
                 demandAds = allAds.filter(ad => ad.adType === 'demand');
 
+                // After fetching all users, find the current user in the new list
+                // and update the currentUser object to keep it in sync.
+                if (currentUser) {
+                    const freshCurrentUser = users.find(u => u.id === currentUser.id);
+                    if (freshCurrentUser) {
+                        // Preserve the password from the old object if the server doesn't send it
+                        if (!freshCurrentUser.password && currentUser.password) {
+                            freshCurrentUser.password = currentUser.password;
+                        }
+                        currentUser = freshCurrentUser;
+                    }
+                }
             } catch (error) {
                 console.error("Failed to load data from server:", error);
                 showToast('خطا در بارگذاری اطلاعات از سرور.', 'error');
             }
         }
 
-         // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2955,9 +2967,6 @@ function refreshAllMapMarkers() {
         async function confirmSecondStep(requestId) {
             const request = requests.find(r => r.id === requestId);
             
-            // 🐛 FIX: The condition for 'full' basket was incorrect. 
-            // It should check if the driver has confirmed pickup (isPickupConfirmed),
-            // not a non-existent 'receiverAcknowledged' flag.
             const canProceed = (request.type === 'empty' && request.isPickupConfirmed) || 
                                (request.type === 'full' && request.isPickupConfirmed);
 
@@ -2972,18 +2981,21 @@ function refreshAllMapMarkers() {
 
                 if (response.success) {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
-                    // await loadDataFromServer(); // Force refresh - REMOVED FOR SOCKET-BASED UPDATE
                     
+                    // --- Standardized Refresh Logic ---
                     if (currentUser.role === 'driver') {
                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
-                        loadDriverActiveMission(); // Immediately re-render the panel
-                        loadDriverStatus();
                     }
+
+                    await loadDataFromServer();
+                    loadPanelData();
+                    refreshAllMapMarkers();
                     updateAllNotifications();
+                    // --- End Standardized Refresh Logic ---
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
@@ -3535,24 +3547,18 @@ function refreshAllMapMarkers() {
 
             const response = await api.updateRequest(requestId, updates);
 
-            if (response.success && response.request) {
+            if (response.success) {
                 showToast('درخواست پذیرفته شد. مسیریابی فعال شد.', 'success');
+                
+                // --- Standardized Refresh Logic ---
+                // The UI is now updated by the full, reliable data refresh.
+                await loadDataFromServer();
+                loadPanelData();
+                refreshAllMapMarkers();
+                // --- End Standardized Refresh Logic ---
 
-                // --- START: New Immediate UI Update Logic ---
-                // 1. Update the local `requests` array with the new data from the server response
-                const requestIndex = requests.findIndex(r => r.id === requestId);
-                if (requestIndex !== -1) {
-                    requests[requestIndex] = response.request;
-                } else {
-                    requests.push(response.request);
-                }
-
-                // 2. Re-render the affected panels immediately
-                loadDriverRequests(); // This will now show an empty list of pending requests
-                loadDriverActiveMission(); // This will now show the newly accepted mission
-
-                // 3. Update the map and start navigation
-                const newMission = response.request;
+                // Find the newly updated mission to start navigation
+                const newMission = requests.find(r => r.id === requestId);
                 if (newMission && driverMainMap) {
                     await updateRoute(newMission, driverMainMap);
                     startGPSNavigation(newMission);
@@ -3563,8 +3569,6 @@ function refreshAllMapMarkers() {
                     driverMainMap.fitBounds(group.getBounds().pad(0.15));
                     document.getElementById('driver-main-map').scrollIntoView({ behavior: 'smooth' });
                 }
-                // --- END: New Immediate UI Update Logic ---
-                
             } else {
                 showToast(response.message || 'خطا در پذیرش درخواست.', 'error');
             }
