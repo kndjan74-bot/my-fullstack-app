@@ -1309,8 +1309,8 @@ app.put('/api/requests/:id', auth, async (req, res) => {
                         // Mission: Deliver EMPTY baskets. Driver now has more empty baskets.
                         driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
-                        // Mission: Pick up FULL baskets. Driver now has more load capacity.
-                        driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                        // Mission: Pick up FULL baskets. Driver's available capacity decreases.
+                        driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
                 }
                 if (Object.keys(driverUpdate).length > 0) {
