@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-       // --- API ---
+         // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -3535,31 +3535,36 @@ function refreshAllMapMarkers() {
 
             const response = await api.updateRequest(requestId, updates);
 
-            if (response.success) {
+            if (response.success && response.request) {
                 showToast('درخواست پذیرفته شد. مسیریابی فعال شد.', 'success');
 
-                // The API call has already reloaded all data and re-rendered the panels.
-                // We just need to update the local currentUser object with the latest data from the `users` array.
-                const updatedSelf = users.find(u => u.id === currentUser.id);
-                if (updatedSelf) {
-                    currentUser = updatedSelf;
+                // --- START: New Immediate UI Update Logic ---
+                // 1. Update the local `requests` array with the new data from the server response
+                const requestIndex = requests.findIndex(r => r.id === requestId);
+                if (requestIndex !== -1) {
+                    requests[requestIndex] = response.request;
+                } else {
+                    requests.push(response.request);
                 }
-                
-                // Ensure notification badges are updated for all relevant users.
-                updateAllNotifications();
-                
-                // The map markers were already refreshed by the API call, so we can proceed with navigation.
-                const request = requests.find(r => r.id === requestId);
-                if (request && driverMainMap) { // Ensure map is initialized
-                    await updateRoute(request, driverMainMap);
-                    startGPSNavigation(request);
 
-                    const destination = L.latLng(request.location.lat, request.location.lng);
+                // 2. Re-render the affected panels immediately
+                loadDriverRequests(); // This will now show an empty list of pending requests
+                loadDriverActiveMission(); // This will now show the newly accepted mission
+
+                // 3. Update the map and start navigation
+                const newMission = response.request;
+                if (newMission && driverMainMap) {
+                    await updateRoute(newMission, driverMainMap);
+                    startGPSNavigation(newMission);
+
+                    const destination = L.latLng(newMission.location.lat, newMission.location.lng);
                     const driverLocation = L.latLng(currentUser.location.lat, currentUser.location.lng);
                     const group = new L.featureGroup([L.marker(driverLocation), L.marker(destination)]);
                     driverMainMap.fitBounds(group.getBounds().pad(0.15));
                     document.getElementById('driver-main-map').scrollIntoView({ behavior: 'smooth' });
                 }
+                // --- END: New Immediate UI Update Logic ---
+                
             } else {
                 showToast(response.message || 'خطا در پذیرش درخواست.', 'error');
             }
