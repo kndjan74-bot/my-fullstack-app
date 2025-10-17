@@ -12,7 +12,6 @@ const URLS_TO_CACHE = [
 function startGeolocationWatch() {
     if (!isTracking) return;
 
-    // Clear any existing watch to avoid duplicates
     if (watchId) {
         navigator.geolocation.clearWatch(watchId);
     }
@@ -26,7 +25,6 @@ function startGeolocationWatch() {
         };
         const timestamp = new Date(position.timestamp).toISOString();
         
-        // Broadcast the location update to all clients
         self.clients.matchAll().then((clients) => {
           clients.forEach((client) => {
             client.postMessage({
@@ -39,15 +37,14 @@ function startGeolocationWatch() {
       },
       (error) => {
         console.error('Service Worker Geolocation Error:', error.message);
-        // Restart the watch after a short delay to recover from transient errors
         if (isTracking) {
             console.log('Restarting watch due to error.');
-            setTimeout(startGeolocationWatch, 5000); // Retry after 5 seconds
+            setTimeout(startGeolocationWatch, 5000);
         }
       },
       {
         enableHighAccuracy: true,
-        timeout: 30000, // Increased timeout
+        timeout: 30000,
         maximumAge: 0,
       }
     );
@@ -80,7 +77,6 @@ self.addEventListener('activate', (event) => {
   clients.claim();
   console.log('Service Worker activating.');
 
-  // Clean up old caches
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
       caches.keys().then((cacheNames) => {
@@ -131,6 +127,22 @@ self.addEventListener('push', event => {
 });
 
 self.addEventListener('fetch', (event) => {
+    // For API requests, always go to the network.
+    // This prevents caching of dynamic data and avoids potential fetch errors.
+    if (event.request.url.includes('/api/')) {
+        event.respondWith(
+            fetch(event.request).catch((error) => {
+                console.error('Service Worker Fetch Error (API):', error);
+                // Optionally, you could return a generic JSON error response
+                return new Response(JSON.stringify({ success: false, message: 'Network error' }), {
+                  headers: { 'Content-Type': 'application/json' }
+                });
+            })
+        );
+        return;
+    }
+
+    // For all other requests (static assets), use a cache-first strategy.
     event.respondWith(
         caches.match(event.request)
             .then((response) => {
@@ -139,7 +151,9 @@ self.addEventListener('fetch', (event) => {
                     return response;
                 }
                 // Not in cache - go to network
-                return fetch(event.request);
+                return fetch(event.request).catch((error) => {
+                    console.error('Service Worker Fetch Error (Assets):', error);
+                });
             })
     );
 });
