@@ -345,6 +345,19 @@ app.get('/api/users', auth, async (req, res) => {
     }
 });
 
+// Helper function to notify relevant parties about a request update
+const notifyUsers = (request, title, body) => {
+    const userIds = [request.greenhouseId, request.driverId, request.sortingCenterId].filter(id => id != null);
+    
+    // Emit socket event to all relevant users
+    sendUpdateToUsers(userIds, 'request_updated', request);
+
+    // Send push notifications
+    userIds.forEach(userId => {
+        sendPushNotification(userId, { title, body }).catch(err => console.error(`Failed to send notification to user ${userId}:`, err));
+    });
+};
+
 app.post('/api/users/register', async (req, res) => {
     try {
         const { role, fullname, province, phone, password, address, licensePlate } = req.body;
@@ -1351,18 +1364,28 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             return res.status(404).json({ success: false, message: 'درخواست پس از آپدیت یافت نشد' });
         }
 
-        // ارسال نوتیفیکیشن هنگام اختصاص راننده
+        // --- Refactored Socket Emissions ---
+        let notificationTitle = 'وضعیت ماموریت بروزرسانی شد';
+        let notificationBody = `وضعیت ماموریت شما به ${updatedRequest.greenhouseName} تغییر کرد.`;
+
         if (updatedRequest.status === 'assigned' && originalRequest.status !== 'assigned') {
-            const notificationPayload = {
-                title: 'ماموریت جدید برای شما',
-                body: `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`,
-            };
-            sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
+            notificationTitle = 'ماموریت جدید برای شما';
+            notificationBody = `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`;
+        } else if (updatedRequest.status === 'completed' && originalRequest.status !== 'completed') {
+            notificationTitle = 'ماموریت تکمیل شد';
+            notificationBody = `ماموریت شما با ${updatedRequest.greenhouseName} با موفقیت تکمیل شد.`;
         }
 
-        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران متصل**
-        io.emit('global_data_update');
-        console.log(`🚀 Broadcasting global_data_update due to request #${updatedRequest.id} update.`);
+        // Notify all parties involved in the request.
+        notifyUsers(updatedRequest, notificationTitle, notificationBody);
+
+        // If the driver's capacity was changed, also send a specific user_updated event
+        // to the driver and sorting center so their panels update instantly.
+        if (driverToUpdate) {
+            sendUpdateToUsers([driverToUpdate.id, updatedRequest.sortingCenterId], 'user_updated', driverToUpdate);
+        }
+        
+        console.log(`🚀 Sent targeted updates for request #${updatedRequest.id}`);
 
         res.json({
             success: true,

@@ -744,6 +744,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
                     }
                 });
             }
+            // This is now handled by Socket.IO and periodic refresh
         });
 
         async function loadDataFromServer() {
@@ -795,8 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
-const getApiBaseUrl = () => {
+       const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
   // اگر از دامنه اصلی یا لوکال استفاده می‌شود
@@ -1609,6 +1609,25 @@ function initializeGreenhouseMap() {
                 }
             });
         }
+
+        // 🔥 تابع جدید برای رندر مجدد اجباری پنل راننده
+        function forceRefreshDriverPanel() {
+            if (!currentUser || currentUser.role !== 'driver') return;
+            
+            console.log('🔄 رندر مجدد اجباری پنل راننده...');
+            
+            // رندر مجدد تمام بخش‌های پنل راننده
+            loadDriverStatus();
+            loadDriverRequests(); 
+            loadDriverActiveMission();
+            loadDriverConnections();
+            updateAllNotifications();
+            
+            // رندر مجدد marketplace
+            applyMarketFilters(true, 'driver-marketplace-container');
+            
+            console.log('✅ پنل راننده با موفقیت رندر مجدد شد');
+        }
 function createDriverMap(lat, lng) {
             driverMainMap = L.map('driver-main-map').setView([lat, lng], 15);
             driverMainMap.userMarkers = {};
@@ -2376,7 +2395,7 @@ function refreshAllMapMarkers() {
 
             // Connect to Socket.IO and setup listeners
             if (typeof io !== 'undefined' && !socket) {
-                socket = io('https://soodcity.liara.run'); // Connect to your server
+                socket = io(); // Connect to the server that served the page
                 window.socket = socket; // Make it globally accessible for listeners
                 
                 socket.on('connect', () => {
@@ -2939,13 +2958,14 @@ function refreshAllMapMarkers() {
         async function confirmFirstStep(requestId) {
             const response = await api.updateRequest(requestId, { isPickupConfirmed: true });
             if (response.success && response.request) {
-                // The global_data_update socket event will handle the refresh.
-                // We just show a toast message.
-                const isDriver = currentUser.role === 'driver';
-                const toastMessage = isDriver
-                    ? 'دریافت بار تایید شد. منتظر تایید گلخانه‌دار...'
-                    : 'دریافت بار تایید شد. منتظر تایید راننده...';
-                showToast(toastMessage, 'success');
+                // The server will now broadcast this change via socket.
+                // The socket listener will handle the data update and UI refresh.
+                
+                // We can still force a local refresh for instant feedback,
+                // which is a good user experience.
+                forceRefreshDriverPanel();
+                
+                showToast('دریافت بار تایید شد. منتظر تایید گلخانه‌دار...', 'success');
             } else {
                 showToast(response.message || 'خطا در تایید مرحله اول.', 'error');
             }
@@ -2954,7 +2974,10 @@ function refreshAllMapMarkers() {
         async function confirmSecondStep(requestId) {
             const request = requests.find(r => r.id === requestId);
             
-            if (request && request.isPickupConfirmed) {
+            const canProceed = (request.type === 'empty' && request.isPickupConfirmed) || 
+                               (request.type === 'full' && request.isPickupConfirmed);
+
+            if (request && canProceed) {
                 const updates = {
                     status: 'completed',
                     completedAt: new Date().toISOString()
@@ -2963,28 +2986,26 @@ function refreshAllMapMarkers() {
                 const response = await api.updateRequest(requestId, updates);
 
                 if (response.success) {
-                    showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
+                    // The server will broadcast this change via socket.
+                    // The socket listener will handle the data update and UI refresh.
+
+                    // Force a local refresh for instant feedback.
+                    forceRefreshDriverPanel();
                     
-                    // The global_data_update socket event will refresh the UI, but for the driver,
-                    // an immediate status update is good for UX.
                     if (currentUser.role === 'driver') {
-                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
-                        // We will manually call loadDriverStatus here for an instant update.
-                        // The socket will handle the rest.
-                        await loadDataFromServer(); // get the latest data before re-rendering
-                        loadDriverStatus(); 
-                        loadDriverActiveMission();
                     }
+                    
+                    showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
             } else {
-                const toastMessage = 'ابتدا باید طرف مقابل تحویل را تایید کند.';
-                showToast(toastMessage, 'error');
+                showToast('ابتدا باید طرف مقابل تحویل را تایید کند.', 'error');
             }
         }
 
@@ -3525,22 +3546,15 @@ function refreshAllMapMarkers() {
             const response = await api.updateRequest(requestId, updates);
 
             if (response.success && response.request) {
+                // The server will broadcast this change via socket.
+                // The socket listener will handle the data update and UI refresh.
+                
+                // Force a local refresh for instant feedback.
+                forceRefreshDriverPanel();
+                
                 showToast('درخواست پذیرفته شد. مسیریابی فعال شد.', 'success');
-
-                // --- START: New Immediate UI Update Logic ---
-                // 1. Update the local `requests` array with the new data from the server response
-                const requestIndex = requests.findIndex(r => r.id === requestId);
-                if (requestIndex !== -1) {
-                    requests[requestIndex] = response.request;
-                } else {
-                    requests.push(response.request);
-                }
-
-                // 2. Re-render the affected panels immediately
-                loadDriverRequests(); // This will now show an empty list of pending requests
-                loadDriverActiveMission(); // This will now show the newly accepted mission
-
-                // 3. Update the map and start navigation
+                
+                // مسیریابی و ناوبری
                 const newMission = response.request;
                 if (newMission && driverMainMap) {
                     await updateRoute(newMission, driverMainMap);
@@ -3552,8 +3566,6 @@ function refreshAllMapMarkers() {
                     driverMainMap.fitBounds(group.getBounds().pad(0.15));
                     document.getElementById('driver-main-map').scrollIntoView({ behavior: 'smooth' });
                 }
-                // --- END: New Immediate UI Update Logic ---
-                
             } else {
                 showToast(response.message || 'خطا در پذیرش درخواست.', 'error');
             }
@@ -3579,6 +3591,27 @@ function refreshAllMapMarkers() {
             }
         }
 
+        // 🔥 توابع کمکی
+        function getMissionTitle(mission) {
+            if (mission.type === 'delivered_basket') {
+                return `تحویل به ${mission.sortingCenterName}`;
+            } else {
+                return `ماموریت به ${mission.greenhouseName}`;
+            }
+        }
+
+        function getMissionDetails(mission) {
+            if (mission.type === 'delivered_basket') {
+                return mission.description || `تحویل ${mission.quantity} سبد به مرکز سورتینگ`;
+            } else {
+                return `
+                    نوع: ${mission.type === 'empty' ? 'سبد خالی' : 'سبد پر'} - ${mission.quantity} عدد<br>
+                    تلفن: ${mission.greenhousePhone || '-'}<br>
+                    آدرس: ${mission.greenhouseAddress || 'درحال بارگذاری...'}
+                `;
+            }
+        }
+
         function clearDriverWatcher() {
             if (driverWatcher.id !== null) {
                 if (driverWatcher.type === 'watch') {
@@ -3598,29 +3631,91 @@ function refreshAllMapMarkers() {
             });
         }
 
+        // 🔥 تابع جدید برای رندر مجدد اجباری پنل راننده
+        function forceRefreshDriverPanel() {
+            if (!currentUser || currentUser.role !== 'driver') return;
+            
+            console.log('🔄 رندر مجدد اجباری پنل راننده...');
+            
+            // رندر مجدد تمام بخش‌های پنل راننده
+            loadDriverStatus();
+            loadDriverRequests(); 
+            loadDriverActiveMission();
+            loadDriverConnections();
+            updateAllNotifications();
+            
+            // رندر مجدد marketplace
+            applyMarketFilters(true, 'driver-marketplace-container');
+            
+            console.log('✅ پنل راننده با موفقیت رندر مجدد شد');
+        }
+
+        // 🔥 اصلاح اساسی تابع loadDriverActiveMission
         function loadDriverActiveMission() {
+            // Defensive checks
+            if (!requests || !currentUser) return;
+
             const activeMission = requests.find(r => 
                 r.driverId === currentUser.id && 
                 ['in_progress', 'delivering', 'in_progress_to_sorting'].includes(r.status)
             );
             
             const container = document.getElementById('driver-active-mission');
+            if (!container) return; // Exit if the container element isn't in the DOM yet
             
             if (!activeMission) {
                 container.innerHTML = '<p class="text-gray-500 text-center py-8">ماموریت فعالی ندارید</p>';
                 return;
             }
 
-            let missionTitle, missionDetails;
-            if (activeMission.type === 'sorting_delivery' || activeMission.type === 'delivered_basket') {
-                missionTitle = `تحویل به ${activeMission.sortingCenterName}`;
-                missionDetails = `<p class="text-gray-600 text-sm">${activeMission.description}</p>`;
-            } else {
-                missionTitle = `ماموریت به ${activeMission.greenhouseName}`;
-                missionDetails = `
-                    <p class="text-sm text-gray-600">نوع: ${activeMission.type === 'empty' ? 'سبد خالی' : 'سبد پر'} - ${activeMission.quantity} عدد</p>
-                    <p class="text-sm text-gray-600">تلفن: ${activeMission.greenhousePhone || '-'}</p>
-                    <p class="text-xs text-gray-500">آدرس: ${activeMission.greenhouseAddress || 'درحال بارگذاری...'}</p>
+            let actionButtons = '';
+            
+            // 🔥 منطق ساده و صحیح برای نمایش دکمه‌ها
+            if (activeMission.type === 'empty') {
+                // ماموریت سبد خالی
+                if (!activeMission.isPickupConfirmed) {
+                    actionButtons = `
+                        <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                            <p class="text-gray-600">منتظر تایید دریافت سبدها توسط گلخانه‌دار...</p>
+                        </div>
+                    `;
+                } else {
+                    actionButtons = `
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                            <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد.</p>
+                            <button onclick="confirmSecondStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                <i class="fas fa-check-double ml-2"></i>تکمیل ماموریت (تحویل دادم)
+                            </button>
+                        </div>
+                    `;
+                }
+            } 
+            else if (activeMission.type === 'full') {
+                // ماموریت سبد پر
+                if (!activeMission.isPickupConfirmed) {
+                    actionButtons = `
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                            <p class="text-green-700 font-medium mb-2">در حال تحویل گرفتن بار از گلخانه.</p>
+                            <button onclick="confirmFirstStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
+                                <i class="fas fa-box-check ml-2"></i>تحویل گرفتم
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    actionButtons = `
+                        <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
+                            <p class="text-gray-600">منتظر تایید نهایی گلخانه‌دار...</p>
+                        </div>
+                    `;
+                }
+            }
+            else if (activeMission.type === 'delivered_basket') {
+                // تحویل به سورتینگ
+                actionButtons = `
+                    <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4 text-center">
+                        <p class="text-indigo-700 font-medium mb-2">در حال تحویل بار به مرکز سورتینگ.</p>
+                        <p class="text-indigo-600 text-sm">منتظر تایید مرکز سورتینگ...</p>
+                    </div>
                 `;
             }
 
@@ -3628,8 +3723,8 @@ function refreshAllMapMarkers() {
                 <div class="border border-green-200 bg-green-50 rounded-lg p-4">
                     <div class="flex items-center justify-between mb-3">
                         <div>
-                            <h4 class="font-semibold">${missionTitle}</h4>
-                            ${missionDetails}
+                            <h4 class="font-semibold">${getMissionTitle(activeMission)}</h4>
+                            <p class="text-sm text-gray-600">${getMissionDetails(activeMission)}</p>
                         </div>
                         <span class="px-3 py-1 rounded-full text-sm ${getStatusClass(activeMission.status)}">
                             ${getStatusText(activeMission.status)}
@@ -3640,40 +3735,31 @@ function refreshAllMapMarkers() {
                             <i class="fas fa-route ml-1"></i>
                             مسیریابی خارجی
                         </button>
-                        ${(activeMission.type !== 'sorting_delivery' && activeMission.type !== 'delivered_basket') ? `
-                            <!-- Corrected Logic: Empty Basket for Driver -->
-                            ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                    <p class="text-gray-600">منتظر تایید دریافت سبدها توسط گلخانه‌دار...</p>
-                                </div>
-                            ` : ''}
-                            ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
-                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                                    <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد. لطفاً ماموریت را تکمیل کنید.</p>
-                                    <button onclick="confirmSecondStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                        <i class="fas fa-check-double ml-2"></i>تکمیل ماموریت (تحویل دادم)
-                                    </button>
-                                </div>
-                            ` : ''}
-
-                            <!-- Corrected Logic: Full Basket for Driver -->
-                            ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
-                                <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-                                    <p class="text-green-700 font-medium mb-2">در حال تحویل گرفتن بار از گلخانه.</p>
-                                    <button onclick="confirmFirstStep(${activeMission.id})" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-semibold">
-                                        <i class="fas fa-box-check ml-2"></i>تحویل گرفتم
-                                    </button>
-                                </div>
-                            ` : ''}
-                            ${activeMission.type === 'full' && activeMission.isPickupConfirmed ? `
-                                <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
-                                    <p class="text-gray-600">منتظر تایید نهایی گلخانه‌دار...</p>
-                                </div>
-                            ` : ''}
-                        ` : ''}
+                        ${actionButtons}
                     </div>
                 </div>
             `;
+        }
+
+        // 🔥 توابع کمکی
+        function getMissionTitle(mission) {
+            if (mission.type === 'delivered_basket') {
+                return `تحویل به ${mission.sortingCenterName}`;
+            } else {
+                return `ماموریت به ${mission.greenhouseName}`;
+            }
+        }
+
+        function getMissionDetails(mission) {
+            if (mission.type === 'delivered_basket') {
+                return mission.description || `تحویل ${mission.quantity} سبد به مرکز سورتینگ`;
+            } else {
+                return `
+                    نوع: ${mission.type === 'empty' ? 'سبد خالی' : 'سبد پر'} - ${mission.quantity} عدد<br>
+                    تلفن: ${mission.greenhousePhone || '-'}<br>
+                    آدرس: ${mission.greenhouseAddress || 'درحال بارگذاری...'}
+                `;
+            }
         }
 
         function broadcastUserUpdate(userId) {
@@ -4701,13 +4787,13 @@ function refreshAllMapMarkers() {
             roleTextElement.textContent = roleTexts[userRole] || 'به پلتفرم هوشمند کشاورزی سودسیتی خوش آمدید.';
 
             const hideModal = () => {
-                modal.classList.remove('visible');
+                modal.classList.add('hidden'); // Use hidden to hide
                 sessionStorage.setItem('disclaimer_shown_this_session', 'true');
             };
 
             agreeBtn.onclick = hideModal;
 
-            modal.classList.add('visible');
+            modal.classList.remove('hidden'); // Use hidden to show
         }
 
         function showPermissionModal({ icon, title, body, onAgree, onDisagree }) {
@@ -4867,25 +4953,7 @@ function refreshAllMapMarkers() {
                 return;
             }
 
-            // Central handler for all data refreshes to avoid full page reloads
-            const refreshUI = () => {
-                if (currentUser) {
-                    console.log('🚀 Refreshing UI with new data...');
-                    loadPanelData();
-                    refreshAllMapMarkers();
-                    updateAllNotifications();
-                    refreshActiveChats();
-                }
-            };
-
-            // Generic listener for broad updates
-            socket.on('global_data_update', async () => {
-                console.log('📢 Received global_data_update. Fetching all new data.');
-                await loadDataFromServer();
-                refreshUI();
-            });
-
-            // Specific listener for request updates
+            // Listener for when a specific request is updated
             socket.on('request_updated', (updatedRequest) => {
                 console.log(`📢 Received request_updated for ID: ${updatedRequest.id}`);
                 const index = requests.findIndex(r => r.id === updatedRequest.id);
@@ -4894,29 +4962,57 @@ function refreshAllMapMarkers() {
                 } else {
                     requests.push(updatedRequest);
                 }
-                refreshUI();
+                
+                // Intelligently re-render only what's necessary based on the user's role
+                if (currentUser) {
+                    switch (currentUser.role) {
+                        case 'driver':
+                            loadDriverActiveMission();
+                            loadDriverRequests();
+                            break;
+                        case 'greenhouse':
+                            loadGreenhouseRequests();
+                            break;
+                        case 'sorting':
+                            loadSortingRequests();
+                            loadIncomingDeliveries();
+                            break;
+                    }
+                    updateAllNotifications();
+                }
             });
 
-            // Specific listener for user updates (like location or capacity)
+            // Listener for when a specific user's data (like capacity) is updated
             socket.on('user_updated', (updatedUser) => {
-                 console.log(`📢 Received user_updated for ID: ${updatedUser.id}`);
+                console.log(`📢 Received user_updated for ID: ${updatedUser.id}`);
                 const index = users.findIndex(u => u.id === updatedUser.id);
                 if (index !== -1) {
+                    // Preserve existing location if the update doesn't contain one
+                    const oldLocation = users[index].location;
                     users[index] = { ...users[index], ...updatedUser };
-                     if (currentUser && currentUser.id === updatedUser.id) {
-                        currentUser = { ...currentUser, ...updatedUser };
+                    if (!updatedUser.location && oldLocation) {
+                        users[index].location = oldLocation;
                     }
                 } else {
                     users.push(updatedUser);
                 }
-                refreshUI();
-            });
+                
+                // Update the current user object if it's the one being updated
+                if (currentUser && currentUser.id === updatedUser.id) {
+                    currentUser = { ...currentUser, ...users[index] };
+                }
 
-            // Listener for forcing a refresh from the server
-            socket.on('force_refresh', async () => {
-                console.log('📢 Received force_refresh. Fetching all new data.');
-                await loadDataFromServer();
-                refreshUI();
+                // Re-render components that depend on user data
+                if (currentUser) {
+                     switch (currentUser.role) {
+                        case 'driver':
+                            loadDriverStatus();
+                            break;
+                        case 'sorting':
+                            loadAvailableDrivers();
+                            break;
+                    }
+                }
             });
         }
 
