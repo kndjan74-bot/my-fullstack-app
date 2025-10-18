@@ -1290,75 +1290,62 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         // The complex conditional logic is removed. The server now trusts the client
         // to send the correct updates at the correct time. The UI logic will enforce the sequence.
 
-        // Handle driver capacity changes only if a driver is assigned and the status is changing.
+        // --- START: Correct Driver Capacity and Real-time Update Logic ---
         if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
-                // LOGIC FOR DECREMENTING CAPACITY (WHEN STARTING A MISSION)
+                // When a mission is ACCEPTED ('in_progress')
                 if (updates.status === 'in_progress') {
                     if (originalRequest.type === 'empty') {
+                        // Driver takes EMPTY baskets from sorting, so their basket count decreases.
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
                     } else if (originalRequest.type === 'full') {
+                        // Driver goes to pick up FULL baskets, so their load capacity is reserved (decreases).
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
                     }
-                }
-                // LOGIC FOR RELEASING CAPACITY (WHEN COMPLETING A MISSION)
+                } 
+                // When a mission is COMPLETED
                 else if (updates.status === 'completed') {
                     if (originalRequest.type === 'empty') {
-                        // Mission: Deliver EMPTY baskets. Driver now has more empty baskets.
-                        driverUpdate = { $inc: { emptyBaskets: originalRequest.quantity } };
+                        // Driver DELIVERED empty baskets. Nothing happens to their capacity here.
+                        // They are now free.
                     } else if (originalRequest.type === 'full') {
-                        // Mission: Pick up FULL baskets. Driver's available capacity decreases but not below zero.
-                        const newCapacity = Math.max(0, driver.loadCapacity - originalRequest.quantity);
-                        driverUpdate = { $set: { loadCapacity: newCapacity } };
+                        // Driver PICKED UP full baskets. This capacity is now "filled".
+                        // It doesn't get released until delivery to the sorting center.
                     }
                 }
+                // When a CONSOLIDATED delivery to sorting center is COMPLETED
+                else if (updates.status === 'completed' && originalRequest.type === 'delivered_basket') {
+                    // Driver DELIVERED full baskets to sorting. Their load capacity is now restored.
+                    driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                }
+
                 if (Object.keys(driverUpdate).length > 0) {
-                    const updatedDriver = await User.findOneAndUpdate({ id: driver.id }, driverUpdate, { new: true });
-                    console.log(`✅ ظرفیت راننده ${updatedDriver.fullname} آپدیت شد:`, driverUpdate);
-                    sendUpdateToUsers(driver.id, 'user_updated', updatedDriver);
+                    await User.findOneAndUpdate({ id: driver.id }, driverUpdate, { new: true });
                 }
             }
         }
-        // --- End of New Logic ---
 
-        // Now, update the request itself with the new data.
-        const updatedRequest = await Request.findOneAndUpdate(
-            { id: requestId },
-            updates,
-            { new: true }
-        );
+        const updatedRequest = await Request.findOneAndUpdate({ id: requestId }, updates, { new: true });
 
         if (!updatedRequest) {
-            // This case should ideally not be hit due to the check at the beginning, but it's a good safeguard.
             return res.status(404).json({ success: false, message: 'درخواست پس از آپدیت یافت نشد' });
         }
 
-        // ارسال نوتیفیکیشن هنگام اختصاص راننده
-        if (updatedRequest.status === 'assigned' && originalRequest.status !== 'assigned') {
+        // Send push notifications for key status changes
+        if (updates.status === 'assigned' && originalRequest.status !== 'assigned') {
             const notificationPayload = {
                 title: 'ماموریت جدید برای شما',
                 body: `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`,
             };
-            sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
+            sendPushNotification(updatedRequest.driverId, notificationPayload);
         }
 
-        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران مرتبط**
-        const involvedUsers = [
-            updatedRequest.greenhouseId, 
-            updatedRequest.sortingCenterId
-        ].filter(Boolean); // Filter out null/undefined IDs
-        
-        if (updatedRequest.driverId) {
-            involvedUsers.push(updatedRequest.driverId);
-        }
-
-        // Use a Set to ensure unique user IDs before broadcasting
-        const uniqueInvolvedUsers = [...new Set(involvedUsers)];
-
-        console.log(`🚀 Broadcasting request update for #${updatedRequest.id} to users:`, uniqueInvolvedUsers);
-        sendUpdateToUsers(uniqueInvolvedUsers, 'request_updated', updatedRequest);
+        // Use a global event to force all connected clients to refetch data.
+        // This is a simpler and more reliable way to ensure all UIs are in sync.
+        io.emit('global_data_update');
+        console.log('📢 Sent global_data_update to all clients.');
 
         res.json({
             success: true,
