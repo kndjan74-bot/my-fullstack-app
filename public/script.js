@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-         // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -817,7 +817,7 @@ const API_BASE_URL = getApiBaseUrl();
                     ...options.headers,
                 };
                 if (token) {
-                    headers['x-auth-token'] = token;
+                    headers['x-auth-token'] = token
                 }
 
                 try {
@@ -2938,14 +2938,29 @@ function refreshAllMapMarkers() {
 
         async function confirmFirstStep(requestId) {
             const response = await api.updateRequest(requestId, { isPickupConfirmed: true });
-            if (response.success) {
-                // The API wrapper handles all data reloading and panel refreshing.
+            if (response.success && response.request) {
+                // --- START: Immediate UI Update Logic ---
+                // 1. Update the local `requests` array with the new data from the server response
+                const requestIndex = requests.findIndex(r => r.id === requestId);
+                if (requestIndex !== -1) {
+                    requests[requestIndex] = response.request;
+                } else {
+                    requests.push(response.request);
+                }
+
+                // 2. Re-render the affected panel for the current user immediately
+                if (currentUser.role === 'greenhouse') {
+                    loadGreenhouseRequests();
+                } else if (currentUser.role === 'driver') {
+                    loadDriverActiveMission();
+                }
+                // --- END: Immediate UI Update Logic ---
+
                 const isDriver = currentUser.role === 'driver';
                 const toastMessage = isDriver
                     ? 'دریافت بار تایید شد. منتظر تایید گلخانه‌دار...'
                     : 'دریافت بار تایید شد. منتظر تایید راننده...';
                 showToast(toastMessage, 'success');
-                // We can also trigger an explicit notification update for good measure.
                 updateAllNotifications();
             } else {
                 showToast(response.message || 'خطا در تایید مرحله اول.', 'error');

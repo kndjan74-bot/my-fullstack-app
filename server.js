@@ -391,8 +391,8 @@ app.post('/api/users/register', async (req, res) => {
                 address: newUser.address,
                 licensePlate: newUser.licensePlate,
                 location: newUser.location,
-                emptyBaskets: newUser.emptyBaskets,
-                loadCapacity: newUser.loadCapacity
+                emptyBaskets: newUser.emptyBaskets || 0,
+                loadCapacity: newUser.loadCapacity || 0
             }
         });
 
