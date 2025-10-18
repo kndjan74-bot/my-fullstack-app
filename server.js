@@ -1290,62 +1290,79 @@ app.put('/api/requests/:id', auth, async (req, res) => {
         // The complex conditional logic is removed. The server now trusts the client
         // to send the correct updates at the correct time. The UI logic will enforce the sequence.
 
-        // --- START: Correct Driver Capacity and Real-time Update Logic ---
+        // Handle driver capacity changes only if a driver is assigned and the status is changing.
         if (originalRequest.driverId && updates.status && updates.status !== originalRequest.status) {
             const driver = await User.findOne({ id: originalRequest.driverId });
             if (driver) {
                 let driverUpdate = {};
-                // When a mission is ACCEPTED ('in_progress')
+                // وقتی راننده ماموریت رو میپذیره (in_progress)
                 if (updates.status === 'in_progress') {
                     if (originalRequest.type === 'empty') {
-                        // Driver takes EMPTY baskets from sorting, so their basket count decreases.
+                        // راننده سبد خالی از سورتینگ میگیره
                         driverUpdate = { $inc: { emptyBaskets: -originalRequest.quantity } };
+                        console.log(`📦 کم کردن ${originalRequest.quantity} سبد خالی از راننده`);
+                    
                     } else if (originalRequest.type === 'full') {
-                        // Driver goes to pick up FULL baskets, so their load capacity is reserved (decreases).
+                        // راننده برای بارگیری سبد پر میرود
                         driverUpdate = { $inc: { loadCapacity: -originalRequest.quantity } };
+                        console.log(`🚚 رزرو ${originalRequest.quantity} ظرفیت بارگیری`);
+                    }
+                }
+                // وقتی ماموریت تکمیل میشه (completed)
+                else if (updates.status === 'completed') {
+                    // This logic is for the original "full" or "empty" missions, not the consolidated one.
+                    if (originalRequest.type === 'full') {
+                        // A 'full' basket mission is completed by the greenhouse and driver.
+                        // The load is now with the driver, but capacity is not yet restored.
+                        // Capacity is restored only when the consolidated delivery to the sorting center is completed.
+                        // We will set the `isConsolidated` flag to `false` here, to mark it ready for consolidation.
+                        updates.isConsolidated = false;
+                        console.log(`📥 ماموریت سبد پر تکمیل شد، آماده برای تجمیع.`);
+
+                    } else if (originalRequest.type === 'empty') {
+                         // An 'empty' basket mission is completed. The driver's capacity is not affected.
+                        console.log(`✅ ماموریت سبد خالی تکمیل شد.`);
                     }
                 } 
-                // When a mission is COMPLETED
-                else if (updates.status === 'completed') {
-                    if (originalRequest.type === 'empty') {
-                        // Driver DELIVERED empty baskets. Nothing happens to their capacity here.
-                        // They are now free.
-                    } else if (originalRequest.type === 'full') {
-                        // Driver PICKED UP full baskets. This capacity is now "filled".
-                        // It doesn't get released until delivery to the sorting center.
-                    }
-                }
-                // When a CONSOLIDATED delivery to sorting center is COMPLETED
+                // Special case for consolidated delivery completion
                 else if (updates.status === 'completed' && originalRequest.type === 'delivered_basket') {
-                    // Driver DELIVERED full baskets to sorting. Their load capacity is now restored.
+                    // راننده سبد پر رو به سورتینگ تحویل داده
                     driverUpdate = { $inc: { loadCapacity: originalRequest.quantity } };
+                    console.log(`🔄 آزاد کردن ${originalRequest.quantity} ظرفیت بارگیری برای راننده`);
                 }
 
+                // اعمال تغییرات
                 if (Object.keys(driverUpdate).length > 0) {
                     await User.findOneAndUpdate({ id: driver.id }, driverUpdate, { new: true });
                 }
             }
         }
+        // --- End of New Logic ---
 
-        const updatedRequest = await Request.findOneAndUpdate({ id: requestId }, updates, { new: true });
+        // Now, update the request itself with the new data.
+        const updatedRequest = await Request.findOneAndUpdate(
+            { id: requestId },
+            updates,
+            { new: true }
+        );
 
         if (!updatedRequest) {
+            // This case should ideally not be hit due to the check at the beginning, but it's a good safeguard.
             return res.status(404).json({ success: false, message: 'درخواست پس از آپدیت یافت نشد' });
         }
 
-        // Send push notifications for key status changes
-        if (updates.status === 'assigned' && originalRequest.status !== 'assigned') {
+        // ارسال نوتیفیکیشن هنگام اختصاص راننده
+        if (updatedRequest.status === 'assigned' && originalRequest.status !== 'assigned') {
             const notificationPayload = {
                 title: 'ماموریت جدید برای شما',
                 body: `یک ماموریت جدید از ${updatedRequest.greenhouseName} به شما اختصاص داده شد.`,
             };
-            sendPushNotification(updatedRequest.driverId, notificationPayload);
+            sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
 
-        // Use a global event to force all connected clients to refetch data.
-        // This is a simpler and more reliable way to ensure all UIs are in sync.
+        // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران متصل**
         io.emit('global_data_update');
-        console.log('📢 Sent global_data_update to all clients.');
+        console.log(`🚀 Broadcasting global_data_update due to request #${updatedRequest.id} update.`);
 
         res.json({
             success: true,

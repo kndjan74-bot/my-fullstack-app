@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-       // --- API ---
+      // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2939,29 +2939,13 @@ function refreshAllMapMarkers() {
         async function confirmFirstStep(requestId) {
             const response = await api.updateRequest(requestId, { isPickupConfirmed: true });
             if (response.success && response.request) {
-                // --- START: Immediate UI Update Logic ---
-                // 1. Update the local `requests` array with the new data from the server response
-                const requestIndex = requests.findIndex(r => r.id === requestId);
-                if (requestIndex !== -1) {
-                    requests[requestIndex] = response.request;
-                } else {
-                    requests.push(response.request);
-                }
-
-                // 2. Re-render the affected panel for the current user immediately
-                if (currentUser.role === 'greenhouse') {
-                    loadGreenhouseRequests();
-                } else if (currentUser.role === 'driver') {
-                    loadDriverActiveMission();
-                }
-                // --- END: Immediate UI Update Logic ---
-
+                // The global_data_update socket event will handle the refresh.
+                // We just show a toast message.
                 const isDriver = currentUser.role === 'driver';
                 const toastMessage = isDriver
                     ? 'دریافت بار تایید شد. منتظر تایید گلخانه‌دار...'
                     : 'دریافت بار تایید شد. منتظر تایید راننده...';
                 showToast(toastMessage, 'success');
-                updateAllNotifications();
             } else {
                 showToast(response.message || 'خطا در تایید مرحله اول.', 'error');
             }
@@ -2970,35 +2954,31 @@ function refreshAllMapMarkers() {
         async function confirmSecondStep(requestId) {
             const request = requests.find(r => r.id === requestId);
             
-            // 🐛 FIX: The condition for 'full' basket was incorrect. 
-            // It should check if the driver has confirmed pickup (isPickupConfirmed),
-            // not a non-existent 'receiverAcknowledged' flag.
-            const canProceed = (request.type === 'empty' && request.isPickupConfirmed) || 
-                               (request.type === 'full' && request.isPickupConfirmed);
-
-            if (request && canProceed) {
+            if (request && request.isPickupConfirmed) {
                 const updates = {
                     status: 'completed',
-                    completedAt: new Date().toISOString(),
-                    isConsolidated: request.type === 'full' ? false : undefined
+                    completedAt: new Date().toISOString()
                 };
 
                 const response = await api.updateRequest(requestId, updates);
 
                 if (response.success) {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
-                    // await loadDataFromServer(); // Force refresh - REMOVED FOR SOCKET-BASED UPDATE
                     
+                    // The global_data_update socket event will refresh the UI, but for the driver,
+                    // an immediate status update is good for UX.
                     if (currentUser.role === 'driver') {
-                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
-                        loadDriverActiveMission(); // Immediately re-render the panel
-                        loadDriverStatus();
+                        // We will manually call loadDriverStatus here for an instant update.
+                        // The socket will handle the rest.
+                        await loadDataFromServer(); // get the latest data before re-rendering
+                        loadDriverStatus(); 
+                        loadDriverActiveMission();
                     }
-                    updateAllNotifications();
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
@@ -3101,7 +3081,7 @@ function refreshAllMapMarkers() {
                                 
 
                                 
-                                <!-- New Logic: Empty Basket for Greenhouse -->
+                                <!-- Corrected Logic: Empty Basket for Greenhouse -->
                                 ${request.status === 'in_progress' && request.type === 'empty' && !request.isPickupConfirmed ? `
                                     <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
                                         <p class="text-green-700 font-medium mb-2">راننده در حال تحویل سبد خالی است.</p>
@@ -3116,7 +3096,7 @@ function refreshAllMapMarkers() {
                                     </div>
                                 ` : ''}
 
-                                <!-- New Logic: Full Basket for Greenhouse -->
+                                <!-- Corrected Logic: Full Basket for Greenhouse -->
                                 ${request.status === 'in_progress' && request.type === 'full' && !request.isPickupConfirmed ? `
                                     <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
                                         <p class="text-gray-600">منتظر تایید دریافت بار توسط راننده...</p>
@@ -3124,7 +3104,7 @@ function refreshAllMapMarkers() {
                                 ` : ''}
                                 ${request.status === 'in_progress' && request.type === 'full' && request.isPickupConfirmed ? `
                                     <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                                        <p class="text-blue-700 font-medium mb-2">راننده بار را تحویل گرفت.</p>
+                                        <p class="text-blue-700 font-medium mb-2">راننده بار را تحویل گرفت. لطفاً تایید کنید.</p>
                                         <button onclick="confirmSecondStep(${request.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
                                             <i class="fas fa-truck-loading ml-2"></i>تکمیل ماموریت (تحویل دادم)
                                         </button>
@@ -3141,19 +3121,13 @@ function refreshAllMapMarkers() {
         async function rejectRequestBySorting(requestId) {
             if (!confirm('آیا از رد کردن این درخواست مطمئن هستید؟')) return;
 
-            await loadDataFromServer();
             const request = requests.find(r => r.id === requestId);
 
             if (request) {
                 const response = await api.deleteRequest(requestId);
                 if (response.success) {
-                    // Server should notify sorting center.
                     showToast('درخواست با موفقیت رد شد.', 'success');
-                    // await loadDataFromServer(); // REMOVED - Socket will handle the update
-                    loadSortingRequests();
-                    loadAvailableDrivers();
-                    updateAllNotifications();
-                    refreshAllMapMarkers();
+                    // The global_data_update socket event will handle the refresh.
                 } else {
                      showToast(response.message || 'خطا در رد کردن درخواست.', 'error');
                 }
@@ -3667,7 +3641,7 @@ function refreshAllMapMarkers() {
                             مسیریابی خارجی
                         </button>
                         ${(activeMission.type !== 'sorting_delivery' && activeMission.type !== 'delivered_basket') ? `
-                            <!-- New Logic: Empty Basket for Driver -->
+                            <!-- Corrected Logic: Empty Basket for Driver -->
                             ${activeMission.type === 'empty' && !activeMission.isPickupConfirmed ? `
                                 <div class="bg-gray-100 border border-gray-200 rounded-lg p-4 text-center">
                                     <p class="text-gray-600">منتظر تایید دریافت سبدها توسط گلخانه‌دار...</p>
@@ -3675,14 +3649,14 @@ function refreshAllMapMarkers() {
                             ` : ''}
                             ${activeMission.type === 'empty' && activeMission.isPickupConfirmed ? `
                                 <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-                                    <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد.</p>
+                                    <p class="text-blue-700 font-medium mb-2">گلخانه‌دار دریافت را تایید کرد. لطفاً ماموریت را تکمیل کنید.</p>
                                     <button onclick="confirmSecondStep(${activeMission.id})" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold">
                                         <i class="fas fa-check-double ml-2"></i>تکمیل ماموریت (تحویل دادم)
                                     </button>
                                 </div>
                             ` : ''}
 
-                            <!-- New Logic: Full Basket for Driver -->
+                            <!-- Corrected Logic: Full Basket for Driver -->
                             ${activeMission.type === 'full' && !activeMission.isPickupConfirmed ? `
                                 <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
                                     <p class="text-green-700 font-medium mb-2">در حال تحویل گرفتن بار از گلخانه.</p>
