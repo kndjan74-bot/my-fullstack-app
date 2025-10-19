@@ -4804,10 +4804,10 @@ function refreshAllMapMarkers() {
         }
 
         async function refreshDataPeriodically() {
-    // Halt refresh if navigating, logged out, a form is active, or another refresh is already in progress.
-    if (isNavigating || !currentUser || isFormActive || isRefreshing) {
+    // Halt refresh if logged out, a form is active, or another refresh is already in progress.
+    if (!currentUser || isFormActive || isRefreshing) {
         return;
-            }
+    }
 
     isRefreshing = true; // Set the flag to prevent parallel execution
     try {
