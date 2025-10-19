@@ -795,8 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-       
-       // --- API ---
+      // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2964,6 +2963,35 @@ function refreshAllMapMarkers() {
             }
         }
 
+        async function endDriverMissionUI() {
+            if (currentUser.role !== 'driver') return;
+
+            console.log("Ending driver mission UI updates...");
+
+            // 1. Stop GPS and clear route
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage('stop-tracking');
+            }
+            clearDriverWatcher();
+            clearRoute(driverMainMap);
+
+            // 2. Force a full data refresh to get the latest state from the server.
+            await loadDataFromServer(); 
+            
+            // 3. The `currentUser` object is now stale. Find the updated user data
+            //    from the `users` array that was just refreshed.
+            const updatedSelf = users.find(u => u.id === currentUser.id);
+            if (updatedSelf) {
+                currentUser = updatedSelf; // Update the global current user object
+            }
+            
+            // 4. Now, re-render all panels and the map with the fresh data.
+            loadDriverStatus(); 
+            loadDriverActiveMission();
+            refreshAllMapMarkers(); // This will update the driver's icon color and status
+            console.log("Driver mission UI cleanup complete.");
+        }
+
         async function confirmSecondStep(requestId) {
             const request = requests.find(r => r.id === requestId);
             
@@ -2979,28 +3007,8 @@ function refreshAllMapMarkers() {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
                     
                     if (currentUser.role === 'driver') {
-                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                            navigator.serviceWorker.controller.postMessage('stop-tracking');
-                        }
-                        clearDriverWatcher();
-                        clearRoute(driverMainMap);
-                        
-                        // --- START: New Immediate Refresh Logic ---
-                        // 1. Force a full data refresh to get the latest state from the server.
-                        await loadDataFromServer(); 
-                        
-                        // 2. The `currentUser` object is now stale. Find the updated user data
-                        //    from the `users` array that was just refreshed.
-                        const updatedSelf = users.find(u => u.id === currentUser.id);
-                        if (updatedSelf) {
-                            currentUser = updatedSelf; // Update the global current user object
-                        }
-                        
-                        // 3. Now, re-render all panels and the map with the fresh data.
-                        loadDriverStatus(); 
-                        loadDriverActiveMission();
-                        refreshAllMapMarkers(); // This will update the driver's icon color
-                        // --- END: New Immediate Refresh Logic ---
+                        // Call the centralized cleanup function
+                        await endDriverMissionUI();
                     }
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
@@ -4907,6 +4915,25 @@ function refreshAllMapMarkers() {
             // Generic listener for broad updates
             socket.on('global_data_update', async () => {
                 console.log('📢 Received global_data_update. Fetching all new data.');
+
+                // --- FIX for consolidated delivery route ---
+                // Before fetching new data, check if an active consolidated mission is about to be completed.
+                if (currentUser && currentUser.role === 'driver') {
+                    const activeConsolidatedMission = requests.find(r => 
+                        r.driverId === currentUser.id && 
+                        r.type === 'delivered_basket' && 
+                        r.status === 'in_progress_to_sorting'
+                    );
+                    
+                    if (activeConsolidatedMission) {
+                        // The server is about to send the 'completed' status. 
+                        // We can anticipate this and clear the route now.
+                        console.log("Anticipating consolidated mission completion. Clearing route...");
+                        clearRoute(driverMainMap);
+                    }
+                }
+                // --- END FIX ---
+
                 await loadDataFromServer();
                 refreshUI();
             });
