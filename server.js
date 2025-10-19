@@ -1978,7 +1978,7 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`✅ سرور روی پورت ${PORT} اجرا شد`);
     console.log(`✅ متصل به MongoDB`);
     console.log(`✅ سلامت سرور: http://localhost:${PORT}/api/health`);

@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2977,19 +2977,29 @@ function refreshAllMapMarkers() {
                 if (response.success) {
                     showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
                     
-                    // The global_data_update socket event will refresh the UI, but for the driver,
-                    // an immediate status update is good for UX.
                     if (currentUser.role === 'driver') {
-                         if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
                             navigator.serviceWorker.controller.postMessage('stop-tracking');
                         }
                         clearDriverWatcher();
                         clearRoute(driverMainMap);
-                        // We will manually call loadDriverStatus here for an instant update.
-                        // The socket will handle the rest.
-                        await loadDataFromServer(); // get the latest data before re-rendering
+                        
+                        // --- START: New Immediate Refresh Logic ---
+                        // 1. Force a full data refresh to get the latest state from the server.
+                        await loadDataFromServer(); 
+                        
+                        // 2. The `currentUser` object is now stale. Find the updated user data
+                        //    from the `users` array that was just refreshed.
+                        const updatedSelf = users.find(u => u.id === currentUser.id);
+                        if (updatedSelf) {
+                            currentUser = updatedSelf; // Update the global current user object
+                        }
+                        
+                        // 3. Now, re-render all panels and the map with the fresh data.
                         loadDriverStatus(); 
                         loadDriverActiveMission();
+                        refreshAllMapMarkers(); // This will update the driver's icon color
+                        // --- END: New Immediate Refresh Logic ---
                     }
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
