@@ -795,6 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
+       
        // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
@@ -3549,20 +3550,23 @@ function refreshAllMapMarkers() {
             if (response.success && response.request) {
                 showToast('درخواست پذیرفته شد. مسیریابی فعال شد.', 'success');
 
-                // --- START: New Immediate UI Update Logic ---
-                // 1. Update the local `requests` array with the new data from the server response
-                const requestIndex = requests.findIndex(r => r.id === requestId);
-                if (requestIndex !== -1) {
-                    requests[requestIndex] = response.request;
-                } else {
-                    requests.push(response.request);
+                // --- START: New Immediate Refresh Logic ---
+                // 1. Force a full data refresh to get the latest state, including driver capacity.
+                await loadDataFromServer(); 
+                
+                // 2. Update the global currentUser object with the fresh data.
+                const updatedSelf = users.find(u => u.id === currentUser.id);
+                if (updatedSelf) {
+                    currentUser = updatedSelf;
                 }
+                
+                // 3. Re-render all relevant UI parts.
+                loadDriverStatus();         // This will update the capacity display.
+                loadDriverRequests();       // This will clear the accepted request from the pending list.
+                loadDriverActiveMission();  // This will show the new mission in the active panel.
+                refreshAllMapMarkers();     // This will update the driver's icon color on the map.
 
-                // 2. Re-render the affected panels immediately
-                loadDriverRequests(); // This will now show an empty list of pending requests
-                loadDriverActiveMission(); // This will now show the newly accepted mission
-
-                // 3. Update the map and start navigation
+                // 4. Update the map route and start navigation.
                 const newMission = response.request;
                 if (newMission && driverMainMap) {
                     await updateRoute(newMission, driverMainMap);
@@ -3574,7 +3578,7 @@ function refreshAllMapMarkers() {
                     driverMainMap.fitBounds(group.getBounds().pad(0.15));
                     document.getElementById('driver-main-map').scrollIntoView({ behavior: 'smooth' });
                 }
-                // --- END: New Immediate UI Update Logic ---
+                // --- END: New Immediate Refresh Logic ---
                 
             } else {
                 showToast(response.message || 'خطا در پذیرش درخواست.', 'error');
