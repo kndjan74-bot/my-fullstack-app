@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -3001,15 +3001,11 @@ function refreshAllMapMarkers() {
                     completedAt: new Date().toISOString()
                 };
 
+                // Only send the request. The UI update will be handled by the socket listener.
                 const response = await api.updateRequest(requestId, updates);
 
                 if (response.success) {
-                    showToast('تحویل با موفقیت تایید شد. ماموریت تکمیل شد.', 'success');
-                    
-                    if (currentUser.role === 'driver') {
-                        // Call the centralized cleanup function
-                        await endDriverMissionUI();
-                    }
+                    showToast('تحویل با موفقیت تایید شد. منتظر به‌روزرسانی سرور...', 'success');
                 } else {
                     showToast(response.message || 'خطا در تکمیل ماموریت.', 'error');
                 }
@@ -4914,26 +4910,31 @@ function refreshAllMapMarkers() {
 
             // Generic listener for broad updates
             socket.on('global_data_update', async () => {
-                console.log('📢 Received global_data_update. Fetching all new data.');
+                console.log('📢 Received global_data_update event.');
 
-                // --- FIX for consolidated delivery route ---
-                // Before fetching new data, check if an active consolidated mission is about to be completed.
+                // --- ENHANCED FIX for ALL mission completions ---
+                // Before fetching new data, check if there was any active mission.
+                // The global update from the server likely signifies that this mission's status has changed to 'completed'.
                 if (currentUser && currentUser.role === 'driver') {
-                    const activeConsolidatedMission = requests.find(r => 
+                    const activeMission = requests.find(r => 
                         r.driverId === currentUser.id && 
-                        r.type === 'delivered_basket' && 
-                        r.status === 'in_progress_to_sorting'
+                        ['in_progress', 'in_progress_to_sorting'].includes(r.status)
                     );
                     
-                    if (activeConsolidatedMission) {
-                        // The server is about to send the 'completed' status. 
-                        // We can anticipate this and clear the route now.
-                        console.log("Anticipating consolidated mission completion. Clearing route...");
-                        clearRoute(driverMainMap);
+                    if (activeMission) {
+                        // An active mission was found. This update is likely its completion signal.
+                        // Trigger the single, centralized cleanup function.
+                        console.log(`Anticipating completion for mission #${activeMission.id}. Running full UI cleanup.`);
+                        await endDriverMissionUI();
+                        // The endDriverMissionUI function handles everything, including fetching data and refreshing UI.
+                        // We can stop here to avoid redundant calls.
+                        return; 
                     }
                 }
                 // --- END FIX ---
 
+                // This code will only run if the update was not a mission completion for the current driver.
+                console.log("Performing standard UI refresh.");
                 await loadDataFromServer();
                 refreshUI();
             });
