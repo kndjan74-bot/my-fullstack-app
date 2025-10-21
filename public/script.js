@@ -184,7 +184,7 @@
                 { value: "Bushehr", name: "بوشهر" }, { value: "Fars", name: "فارس" },
                 { value: "Hormozgan", name: "هرمزگان" }, { value: "Sistan and Baluchestan", name: "سیستان و بلوچستان" },
                 { value: "Kerman", name: "کرمان" }, { value: "Razavi Khorasan", name: "خراسان رضوی" },
-                { value: "North Khorasan", name: "خراسان شمالی" }, { value: "South Khorasan", name: "خراسان جنوبی" },
+                { value: "North Khorasan", name: "خراسان شمالی" }, { value: "South Khorasan",name: "خراسان جنوبی" },
                 { value: "Semnan", name: "سمنان" }, { value: "Mazandaran", name: "مازندران" },
                 { value: "Golestan", name: "گلستان" }, { value: "Alborz", name: "البرز" },
                 { value: "Isfahan", name: "اصفهان" }, { value: "Yazd", name: "یزد" }
@@ -795,7 +795,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-       // --- API ---
+      // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2988,7 +2988,21 @@ function refreshAllMapMarkers() {
             // 4. Now, re-render all panels and the map with the fresh data.
             loadDriverStatus(); 
             loadDriverActiveMission();
-            refreshAllMapMarkers(); // This will update the driver's icon color and status
+            refreshAllMapMarkers(); // This updates other users' markers
+
+            // --- FIX for current driver's icon ---
+            // Explicitly update the current driver's own marker since refreshAllMapMarkers skips it.
+            if (driverMainMap && driverMainMap.userMarkers && driverMainMap.userMarkers[currentUser.id]) {
+                const driverMarker = driverMainMap.userMarkers[currentUser.id];
+                // After a mission, there should be no active request, so this will be null.
+                const activeRequest = requests.find(r => 
+                    r.driverId === currentUser.id && 
+                    ['in_progress', 'in_progress_to_sorting'].includes(r.status)
+                );
+                driverMarker.setIcon(getMarkerIcon('driver', currentUser, activeRequest));
+            }
+            // --- END FIX ---
+
             console.log("Driver mission UI cleanup complete.");
         }
 
