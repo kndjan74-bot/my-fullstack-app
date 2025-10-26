@@ -152,9 +152,10 @@
         }
 
         function renderMarketplace(containerId, theme = 'light') {
-            const container = document.getElementById(containerId);
+            const contentContainerId = `${containerId}-content`;
+            const container = document.getElementById(contentContainerId);
             if (!container) {
-                console.error(`Marketplace container with id ${containerId} not found.`);
+                console.error(`Marketplace content container with id ${contentContainerId} not found.`);
                 return;
             }
 
@@ -795,7 +796,7 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
+       // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -2385,6 +2386,43 @@ function refreshAllMapMarkers() {
                 });
 
                 setupSocketListeners();
+            }
+
+            setupFullscreenToggles();
+        }
+
+        function setupFullscreenToggles() {
+            if (!currentUser || !currentUser.role) return;
+
+            const role = currentUser.role;
+            const mapContainerId = role === 'driver' ? 'driver-main-map' : `${role}-map`;
+            const mapContainer = document.getElementById(mapContainerId);
+            const marketplaceContainer = document.getElementById(`${role}-marketplace-container`);
+
+            // Map toggles
+            const mapFullscreenBtn = document.getElementById(`${role}-map-fullscreen-btn`);
+            const mapExitFullscreenBtn = document.getElementById(`${role}-map-exit-fullscreen-btn`);
+
+            if (mapContainer && mapFullscreenBtn && mapExitFullscreenBtn) {
+                mapFullscreenBtn.addEventListener('click', () => {
+                    mapContainer.classList.add('fullscreen');
+                });
+                mapExitFullscreenBtn.addEventListener('click', () => {
+                    mapContainer.classList.remove('fullscreen');
+                });
+            }
+
+            // Marketplace toggles
+            const marketplaceFullscreenBtn = document.getElementById(`${role}-marketplace-fullscreen-btn`);
+            const marketplaceExitFullscreenBtn = document.getElementById(`${role}-marketplace-exit-fullscreen-btn`);
+
+            if (marketplaceContainer && marketplaceFullscreenBtn && marketplaceExitFullscreenBtn) {
+                marketplaceFullscreenBtn.addEventListener('click', () => {
+                    marketplaceContainer.classList.add('fullscreen');
+                });
+                marketplaceExitFullscreenBtn.addEventListener('click', () => {
+                    marketplaceContainer.classList.remove('fullscreen');
+                });
             }
         }
 
