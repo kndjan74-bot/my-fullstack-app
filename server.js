@@ -266,7 +266,10 @@ app.use(cors({
         'capacitor://localhost',
         'https://soodcityb.liara.run',
         'http://192.168.1.1', // برای شبکه‌های محلی موبایل
-        'http://10.0.2.2'     // برای شبیه‌ساز اندروید
+        'http://10.0.2.2', 
+        'http://localhost', // برای اپ موبایل
+    'ionic://localhost', // برای Ionic
+    'http://localhost:8080', // برای توسعه    // برای شبیه‌ساز اندروید
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
