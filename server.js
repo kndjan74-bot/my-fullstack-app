@@ -24,27 +24,60 @@ webPush.setVapidDetails(
 
 // ==================== تابع کمکی برای ارسال نوتیفیکیشن ====================
 const sendPushNotification = async (userId, payload) => {
-    try {
-        const user = await User.findOne({ id: userId });
+  try {
+    const user = await User.findOne({ id: userId });
 
-        if (user && user.subscription) {
-            const notificationPayload = JSON.stringify(payload);
-            console.log(`🚀 ارسال نوتیفیکیشن به ${user.fullname}`);
-            await webPush.sendNotification(user.subscription, notificationPayload);
-            console.log(`✅ نوتیفیکیشن با موفقیت به ${user.fullname} ارسال شد.`);
-        } else {
-            console.log(`⚠️ کاربر با شناسه ${userId} یافت نشد یا اشتراک نوتیفیکیشن ندارد.`);
-        }
-    } catch (error) {
-        console.error(`❌ خطا در ارسال نوتیفیکیشن به کاربر ${userId}:`, error.body || error.message);
-        // اگر اشتراک منقضی شده باشد، آن را از دیتابیس حذف می‌کنیم
-        if (error.statusCode === 410 || error.statusCode === 404) {
-            console.log('🗑️ حذف اشتراک نامعتبر برای کاربر:', userId);
-            await User.findOneAndUpdate({ id: userId }, { $set: { subscription: null } });
-        }
+    if (user && user.subscription) {
+      // تشخیص نوع subscription
+      const isCapacitor = user.subscription.platform === 'capacitor' || 
+                         user.subscription.endpoint.includes('fcm:');
+      
+      if (isCapacitor) {
+        // ارسال از طریق FCM برای Capacitor
+        await sendFCMNotification(user.subscription, payload);
+      } else {
+        // ارسال از طریق web-push برای مرورگر
+        const notificationPayload = JSON.stringify(payload);
+        await webPush.sendNotification(user.subscription, notificationPayload);
+      }
     }
+  } catch (error) {
+    console.error(`Error sending notification to user ${userId}:`, error);
+  }
 };
+const FCM_SERVER_KEY = 'AIzaSyAOOPxs87Xoj_uhrNNBKaMtpfpIYmAfY5U';
 
+// تابع جدید برای FCM
+const sendFCMNotification = async (subscription, payload) => {
+  try {
+    // استخراج توکن از endpoint
+    const token = subscription.endpoint.replace('fcm:', '');
+    
+    const fcmPayload = {
+      to: token,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+        sound: 'default',
+        click_action: 'FCM_PLUGIN_ACTIVITY' // مهم برای Capacitor
+      },
+      data: payload.data || {},
+      priority: 'high'
+    };
+
+    const response = await axios.post('https://fcm.googleapis.com/fcm/send', 
+      fcmPayload, {
+        headers: {
+          'Authorization': `key=${FCM_SERVER_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+    
+    console.log('FCM notification sent successfully');
+  } catch (error) {
+    console.error('FCM notification error:', error.response?.data || error.message);
+  }
+};
 
 const app = express();
 const server = require('http').createServer(app);
