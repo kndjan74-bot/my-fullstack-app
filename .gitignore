@@ -1,6 +1,13 @@
 # Dependencies
 /node_modules
 
+
+# Firebase and sensitive files
+
+Soodcity.keystore
+*.keystore
+*.jks
+
 # Production
 /build
 /dist

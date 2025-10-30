@@ -795,7 +795,9 @@ let refreshIntervalId = null; // To hold the ID of the refresh interval
             }
         }
 
-      // --- API ---
+       // --- API ---
+
+ // --- API ---
 const getApiBaseUrl = () => {
   const host = window.location.hostname;
   
@@ -878,6 +880,10 @@ const API_BASE_URL = getApiBaseUrl();
             
             async subscribe(subscription) {
                 return this._fetch(`${API_BASE_URL}/subscribe`, { method: 'POST', body: JSON.stringify(subscription) });
+            },
+            
+            async subscribeMobile(token) {
+                return this._fetch(`${API_BASE_URL}/subscribe-mobile`, { method: 'POST', body: JSON.stringify({ token }) });
             },
 
             // --- Ads ---
@@ -2318,7 +2324,7 @@ function refreshAllMapMarkers() {
                 showDisclaimerModal();
             }
 
-            subscribeToPushNotifications(); // Ask for push notification permission
+            initializePushNotifications(); // فراخوانی تابع جدید و هوشمند
             
             // This logic runs after the UI state is updated
             await loadDataFromServer();
@@ -2888,9 +2894,7 @@ function refreshAllMapMarkers() {
             });
 
             select.value = selectedValue; // Restore selected value
-        }
-
-        async function submitRequest(event) {
+        }        async function submitRequest(event) {
             event.preventDefault();
             
             const type = document.getElementById('request-type').value;
@@ -4679,52 +4683,98 @@ function refreshAllMapMarkers() {
             return outputArray;
         }
 
-        async function subscribeToPushNotifications() {
-            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                console.warn('Push notifications are not supported by this browser.');
-                return;
-            }
+        // =================================================================================
+        // تابع جدید و هوشمند برای مدیریت نوتیفیکیشن‌ها در وب و موبایل
+        // =================================================================================
+        async function initializePushNotifications() {
+            // تشخیص اینکه آیا برنامه در محیط Capacitor اجرا می‌شود یا نه
+            const isNativePlatform = window.Capacitor && window.Capacitor.isNativePlatform();
 
-            const registration = await navigator.serviceWorker.ready;
-            let subscription = await registration.pushManager.getSubscription();
-            
-            // If user is already subscribed or has definitively denied permission, do nothing.
-            if (subscription || Notification.permission === 'denied') {
-                return;
-            }
+            if (isNativePlatform) {
+                // --- منطق برای اپلیکیشن موبایل (Capacitor) ---
+                console.log("📱 تشخیص محیط موبایل. تلاش برای ثبت نوتیفیکیشن نیتیو...");
+                
+                
+                // فعال‌سازی پلاگین پوش نوتیفیکیشن Capacitor
+                // نکته: این کدها در محیط مرورگر کار نمی‌کنند و باید در اپ واقعی اجرا شوند.
+                // شما باید پلاگین را نصب کرده و این کد را از حالت کامنت خارج کنید.
+                
+                const { PushNotifications } = window.Capacitor.Plugins;
 
-            const subscribeUser = async () => {
-                try {
-                    const vapidPublicKey = 'BNo_gideD51dMHezXPl30kAP89i16f1fqdG2hB_L5T6sT4aM7L2K2F8p1aJ_r-A-1y8a-z-H8B_y_Z-E8D9F6wY';
-                    const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
-
-                    const newSubscription = await registration.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: convertedVapidKey
-                    });
-
-                    console.log('%c[Push Subscription] User subscribed successfully.', 'color: green; font-weight: bold;');
-                    
-                    // Send the new subscription object to the backend server.
-                    await api.subscribe(newSubscription);
-                    console.log('Subscription details sent to the server.');
-
-                } catch (error) {
-                    console.error('Failed to subscribe to push notifications:', error);
-                    if (Notification.permission === 'denied') {
-                        showToast('شما دسترسی به اعلان‌ها را مسدود کرده‌اید. لطفاً در تنظیمات مرورگر آن را فعال کنید.', 'error');
-                    }
+                // 1. درخواست مجوز از کاربر
+                let permStatus = await PushNotifications.checkPermissions();
+                if (permStatus.receive === 'prompt') {
+                    permStatus = await PushNotifications.requestPermissions();
                 }
-            };
-            
-            // Only ask for permission if it hasn't been granted or denied yet.
-            if (Notification.permission === 'default') {
-                showPermissionModal({
-                    icon: '<i class="fas fa-bell text-blue-500"></i>',
-                    title: 'فعال‌سازی اعلان‌ها',
-                    body: 'برای اطلاع‌رسانی از ماموریت‌ها و پیام‌های جدید، لطفاً اجازه ارسال اعلان را به ما بدهید. ما مزاحم شما نخواهیم شد.',
-                    onAgree: subscribeUser
+
+                if (permStatus.receive !== 'granted') {
+                    showToast('مجوز دریافت نوتیفیکیشن داده نشد.', 'error');
+                    return;
+                }
+                
+                // 2. ثبت دستگاه در سرویس‌های پوش (FCM/APNS)
+                await PushNotifications.register();
+
+                // 3. گوش دادن به رویداد ثبت موفق
+                PushNotifications.addListener('registration', async (token) => {
+                    console.log('✅ توکن دستگاه با موفقیت دریافت شد:', token.value);
+                    // ارسال توکن به سرور
+                    const response = await api.subscribeMobile(token.value);
+                    if (response.success) {
+                        console.log('✅ توکن موبایل با موفقیت به سرور ارسال شد.');
+                    } else {
+                        console.error('❌ خطا در ارسال توکن موبایل به سرور:', response.message);
+                    }
                 });
+
+                // 4. گوش دادن به خطاهای ثبت
+                PushNotifications.addListener('registrationError', (error) => {
+                    console.error('❌ خطا در ثبت نوتیفیکیشن موبایل:', error);
+                    showToast('خطا در ثبت دستگاه برای دریافت نوتیفیکیشن.', 'error');
+                });
+                
+
+            } else {
+                // --- منطق برای مرورگر وب (کد قبلی شما) ---
+                console.log("🌐 تشخیص محیط وب. تلاش برای ثبت نوتیفیکیشن وب...");
+                if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                    console.warn('Push notifications are not supported by this browser.');
+                    return;
+                }
+
+                const registration = await navigator.serviceWorker.ready;
+                let subscription = await registration.pushManager.getSubscription();
+                
+                if (subscription || Notification.permission === 'denied') {
+                    return;
+                }
+
+                const subscribeUser = async () => {
+                    try {
+                        const vapidPublicKey = 'BNo_gideD51dMHezXPl30kAP89i16f1fqdG2hB_L5T6sT4aM7L2K2F8p1aJ_r-A-1y8a-z-H8B_y_Z-E8D9F6wY';
+                        const convertedVapidKey = urlBase64ToUint8Array(vapidPublicKey);
+
+                        const newSubscription = await registration.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: convertedVapidKey
+                        });
+
+                        await api.subscribe(newSubscription);
+                        console.log('✅ اشتراک وب با موفقیت به سرور ارسال شد.');
+
+                    } catch (error) {
+                        console.error('❌ خطا در اشتراک نوتیفیکیشن وب:', error);
+                    }
+                };
+                
+                if (Notification.permission === 'default') {
+                    showPermissionModal({
+                        icon: '<i class="fas fa-bell text-blue-500"></i>',
+                        title: 'فعال‌سازی اعلان‌ها',
+                        body: 'برای اطلاع‌رسانی از ماموریت‌ها و پیام‌های جدید، لطفاً اجازه ارسال اعلان را به ما بدهید.',
+                        onAgree: subscribeUser
+                    });
+                }
             }
         }
 

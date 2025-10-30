@@ -6,7 +6,32 @@ const path = require('path');
 const mongoose = require('mongoose');
 const webPush = require('web-push');
 const axios = require('axios');
+const admin = require('firebase-admin');
 
+// ==================== تنظیمات Firebase Admin ====================
+// مهم: این بخش نیاز به فایل کلید حساب سرویس شما دارد
+// من فرض می‌کنم محتوای فایل JSON در یک متغیر محیطی قرار داده شده است
+
+// ==================== تنظیمات Firebase Admin ====================
+let firebaseAdmin = null;
+try {
+    const admin = require('firebase-admin');
+    const serviceAccount = require('./service-account-key.json');
+    
+    if (!admin.apps.length) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        firebaseAdmin = admin;
+        console.log('✅ Firebase Admin SDK با موفقیت مقداردهی اولیه شد');
+    } else {
+        firebaseAdmin = admin;
+        console.log('✅ Firebase Admin SDK قبلاً مقداردهی شده است');
+    }
+} catch (error) {
+    console.error('❌ خطا در مقداردهی اولیه Firebase Admin SDK:', error.message);
+    console.log('⚠️ نوتیفیکیشن‌های موبایل غیرفعال خواهند بود');
+}
 // In-memory store for verification codes (for simplicity). 
 // In a production environment, use a more robust store like Redis.
 const verificationCodes = {}; // { phone: { code: '1234', expires: 1678886400000 } }
@@ -22,62 +47,54 @@ webPush.setVapidDetails(
   privateVapidKey
 );
 
-// ==================== تابع کمکی برای ارسال نوتیفیکیشن ====================
+// ==================== تابع کمکی هوشمند برای ارسال نوتیفیکیشن ====================
 const sendPushNotification = async (userId, payload) => {
-  try {
-    const user = await User.findOne({ id: userId });
+    try {
+        const user = await User.findOne({ id: userId });
 
-    if (user && user.subscription) {
-      // تشخیص نوع subscription
-      const isCapacitor = user.subscription.platform === 'capacitor' || 
-                         user.subscription.endpoint.includes('fcm:');
-      
-      if (isCapacitor) {
-        // ارسال از طریق FCM برای Capacitor
-        await sendFCMNotification(user.subscription, payload);
-      } else {
-        // ارسال از طریق web-push برای مرورگر
-        const notificationPayload = JSON.stringify(payload);
-        await webPush.sendNotification(user.subscription, notificationPayload);
-      }
-    }
-  } catch (error) {
-    console.error(`Error sending notification to user ${userId}:`, error);
-  }
-};
-const FCM_SERVER_KEY = 'AIzaSyAOOPxs87Xoj_uhrNNBKaMtpfpIYmAfY5U';
-
-// تابع جدید برای FCM
-const sendFCMNotification = async (subscription, payload) => {
-  try {
-    // استخراج توکن از endpoint
-    const token = subscription.endpoint.replace('fcm:', '');
-    
-    const fcmPayload = {
-      to: token,
-      notification: {
-        title: payload.title,
-        body: payload.body,
-        sound: 'default',
-        click_action: 'FCM_PLUGIN_ACTIVITY' // مهم برای Capacitor
-      },
-      data: payload.data || {},
-      priority: 'high'
-    };
-
-    const response = await axios.post('https://fcm.googleapis.com/fcm/send', 
-      fcmPayload, {
-        headers: {
-          'Authorization': `key=${FCM_SERVER_KEY}`,
-          'Content-Type': 'application/json'
+        if (!user) {
+            console.log(`⚠️ کاربر با شناسه ${userId} یافت نشد.`);
+            return;
         }
-      });
-    
-    console.log('FCM notification sent successfully');
-  } catch (error) {
-    console.error('FCM notification error:', error.response?.data || error.message);
-  }
+
+        // اولویت با نوتیفیکیشن موبایل (FCM)
+        if (user.fcmToken) {
+            const message = {
+                notification: {
+                    title: payload.title,
+                    body: payload.body,
+                },
+                token: user.fcmToken,
+            };
+
+            console.log(`📱(FCM) ارسال نوتیفیکیشن به ${user.fullname}`);
+            await admin.messaging().send(message);
+            console.log(`✅ (FCM) نوتیفیکیشن با موفقیت به ${user.fullname} ارسال شد.`);
+
+        // اگر توکن موبایل نبود، از نوتیفیکیشن وب استفاده کن
+        } else if (user.subscription) {
+            const notificationPayload = JSON.stringify(payload);
+            console.log(`🌐 (WebPush) ارسال نوتیفیکیشن به ${user.fullname}`);
+            await webPush.sendNotification(user.subscription, notificationPayload);
+            console.log(`✅ (WebPush) نوتیفیکیشن با موفقیت به ${user.fullname} ارسال شد.`);
+        
+        } else {
+            console.log(`- کاربر ${user.fullname} هیچ اشتراک نوتیفیکیشنی (نه وب و نه موبایل) ندارد.`);
+        }
+    } catch (error) {
+        console.error(`❌ خطا در ارسال نوتیفیکیشن به کاربر ${userId}:`, error.message);
+        
+        // مدیریت خطاهای خاص هر سرویس
+        if (error.code === 'messaging/registration-token-not-registered') {
+            console.log('🗑️ حذف توکن FCM نامعتبر برای کاربر:', userId);
+            await User.findOneAndUpdate({ id: userId }, { $set: { fcmToken: null } });
+        } else if (error.statusCode === 410 || error.statusCode === 404) {
+            console.log('🗑️ حذف اشتراک وب نامعتبر برای کاربر:', userId);
+            await User.findOneAndUpdate({ id: userId }, { $set: { subscription: null } });
+        }
+    }
 };
+
 
 const app = express();
 const server = require('http').createServer(app);
@@ -184,7 +201,8 @@ const UserSchema = new mongoose.Schema({
     dailyStatusSubmitted: { type: Boolean, default: false },
     lastStatusUpdate: { type: Date },
     createdAt: { type: Date, default: Date.now },
-    subscription: { type: Object, default: null }
+    subscription: { type: Object, default: null }, // برای نوتیفیکیشن وب
+    fcmToken: { type: String, default: null } // برای نوتیفیکیشن موبایل
 });
 
 const ConnectionSchema = new mongoose.Schema({
@@ -1921,6 +1939,33 @@ app.post('/api/subscribe', auth, async (req, res) => {
         } else {
              res.status(500).json({ success: false, message: 'خطای سرور در ذخیره اشتراک' });
         }
+    }
+});
+
+// === اشتراک نوتیفیکیشن موبایل (جدید) ===
+app.post('/api/subscribe-mobile', auth, async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) {
+            return res.status(400).json({ success: false, message: 'توکن دستگاه ارائه نشده است' });
+        }
+
+        const updatedUser = await User.findOneAndUpdate(
+            { id: req.user.id },
+            { $set: { fcmToken: token } },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({ success: false, message: 'کاربر یافت نشد' });
+        }
+
+        console.log(`✅ توکن FCM برای کاربر ${updatedUser.fullname} ذخیره شد.`);
+        res.status(200).json({ success: true, message: 'توکن موبایل با موفقیت ذخیره شد' });
+
+    } catch (error) {
+        console.error('❌ خطا در ذخیره توکن FCM:', error);
+        res.status(500).json({ success: false, message: 'خطای سرور در ذخیره توکن موبایل' });
     }
 });
 
