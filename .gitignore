@@ -3,7 +3,7 @@
 
 
 # Firebase and sensitive files
-
+service-account-key.json
 Soodcity.keystore
 *.keystore
 *.jks
