@@ -16,7 +16,7 @@ const admin = require('firebase-admin');
 let firebaseAdmin = null;
 try {
     const admin = require('firebase-admin');
-    const serviceAccount = require('./src/service-account-key.json');
+    const serviceAccount = require('./service-account-key.json');
     
     if (!admin.apps.length) {
         admin.initializeApp({
@@ -60,12 +60,23 @@ const sendPushNotification = async (userId, payload) => {
         // اولویت با نوتیفیکیشن موبایل (FCM)
         if (user.fcmToken) {
             const message = {
-                notification: {
-                    title: payload.title,
-                    body: payload.body,
-                },
-                token: user.fcmToken,
-            };
+            notification: {
+                title: payload.title,
+                body: payload.body,
+            },
+            data: payload.data || {}, // 🔥 این خط رو اضافه کن
+            token: user.fcmToken,
+            android: {
+                priority: "high" // 🔥 این خط رو اضافه کن
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        contentAvailable: true // 🔥 برای iOS
+                    }
+                }
+            }
+        };
 
             console.log(`📱(FCM) ارسال نوتیفیکیشن به ${user.fullname}`);
             await admin.messaging().send(message);
@@ -93,6 +104,16 @@ const sendPushNotification = async (userId, payload) => {
             await User.findOneAndUpdate({ id: userId }, { $set: { subscription: null } });
         }
     }
+};
+
+// میدلور تشخیص موبایل
+const detectMobileApp = (req, res, next) => {
+    const userAgent = req.headers['user-agent'] || '';
+    const isMobileApp = req.headers['x-mobile-app'] === 'true' || 
+                       userAgent.includes('Capacitor');
+    
+    req.isMobileApp = isMobileApp;
+    next();
 };
 
 
@@ -626,6 +647,66 @@ app.put('/api/users/password', auth, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'خطای سرور در تغییر رمز عبور'
+        });
+    }
+});
+
+
+// === به‌روزرسانی موقعیت راننده با پشتیبانی موبایل ===
+app.post('/api/driver/location-update', auth, async (req, res) => {
+    try {
+        const { location, isMobile } = req.body;
+        const driverId = req.user.id;
+
+        // به‌روزرسانی موقعیت راننده
+        const updatedUser = await User.findOneAndUpdate(
+            { id: driverId },
+            { location },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            return res.status(404).json({
+                success: false,
+                message: 'راننده یافت نشد'
+            });
+        }
+
+        // ارسال نوتیفیکیشن به مرکز سورتینگ متصل
+        if (isMobile) {
+            const connections = await Connection.find({
+                sourceId: driverId,
+                status: 'approved'
+            });
+
+            for (const conn of connections) {
+                const notificationPayload = {
+                    title: 'به‌روزرسانی موقعیت راننده',
+                    body: `راننده ${updatedUser.fullname} موقعیت خود را به‌روز کرد`,
+                    data: {
+                        type: 'location_update',
+                        driverId: driverId,
+                        location: location
+                    }
+                };
+                
+                await sendPushNotification(conn.targetId, notificationPayload);
+            }
+        }
+
+        // ارسال آپدیت لحظه‌ای
+        io.emit('global_data_update');
+
+        res.json({
+            success: true,
+            message: 'موقعیت با موفقیت به‌روزرسانی شد'
+        });
+
+    } catch (error) {
+        console.error('خطای به‌روزرسانی موقعیت:', error);
+        res.status(500).json({
+            success: false,
+            message: 'خطای سرور در به‌روزرسانی موقعیت'
         });
     }
 });
@@ -1313,8 +1394,35 @@ app.post('/api/requests', auth, async (req, res) => {
 
         await newRequest.save();
 
+        // 🔥 **اضافه کردن این بخش برای نوتیفیکیشن**
+        const notificationPayload = {
+            title: 'درخواست جدید سبد',
+            body: `${greenhouseName} یک درخواست ${type === 'empty' ? 'سبد خالی' : 'سبد پر'} برای ${quantity} عدد ارسال کرد`,
+            data: {
+                type: 'new_request',
+                requestId: newRequest.id,
+                greenhouseId: greenhouseId,
+                sortingCenterId: sortingCenterId
+            }
+        };
+        
+        // ارسال نوتیفیکیشن به مرکز سورتینگ
+        await sendPushNotification(sortingCenterId, notificationPayload);
+        
+        // همچنین به مدیران سورتینگ متصل هم اطلاع بده
+        const sortingAdmins = await User.find({ 
+            role: 'sorting',
+            id: sortingCenterId // فقط به مرکز سورتینگ هدف
+        });
+        
+        for (const admin of sortingAdmins) {
+            if (admin.id !== sortingCenterId) { // از ارسال تکراری جلوگیری کن
+                await sendPushNotification(admin.id, notificationPayload);
+            }
+        }
+
         // ارسال آپدیت لحظه‌ای به مرکز سورتینگ مربوطه
-        sendUpdateToUsers(newRequest.sortingCenterId, 'request_created', newRequest);
+        sendUpdateToUsers(sortingCenterId, 'request_created', newRequest);
 
         res.status(201).json({
             success: true,
@@ -1329,7 +1437,6 @@ app.post('/api/requests', auth, async (req, res) => {
         });
     }
 });
-
 app.put('/api/requests/:id', auth, async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
@@ -1413,6 +1520,22 @@ app.put('/api/requests/:id', auth, async (req, res) => {
             };
             sendPushNotification(updatedRequest.driverId, notificationPayload).catch(err => console.error("ارسال نوتیفیکیشن اختصاص راننده ناموفق بود:", err));
         }
+
+          if (updates.status === 'in_progress' && originalRequest.status === 'assigned') {
+            const notificationPayload = {
+                title: 'راننده در راه است',
+                body: `راننده ${updatedRequest.driverName} ماموریت را پذیرفت و در راه است`,
+                data: {
+                    type: 'mission_accepted', 
+                    requestId: updatedRequest.id,
+                    driverName: updatedRequest.driverName
+                }
+            };
+            
+            // به گلخانه اطلاع بده
+            await sendPushNotification(updatedRequest.greenhouseId, notificationPayload);
+        }
+
 
         // 🔥 **اصلاح اصلی: ارسال آپدیت به همه کاربران متصل**
         io.emit('global_data_update');
